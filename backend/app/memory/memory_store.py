@@ -67,7 +67,7 @@ class MemoryStore:
             "updated_at": now,
         }
 
-    def list_memories(self) -> list[dict]:
+    def list_memories(self, limit: int = 50) -> list[dict]:
         with self._connect() as connection:
             connection.row_factory = sqlite3.Row
             cursor = connection.cursor()
@@ -77,14 +77,16 @@ class MemoryStore:
                 SELECT id, key, value, category, created_at, updated_at
                 FROM memories
                 ORDER BY id DESC
-                """
+                LIMIT ?
+                """,
+                (limit,),
             )
 
             rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
 
-    def search_memories(self, query: str) -> list[dict]:
+    def search_memories(self, query: str, limit: int = 10) -> list[dict]:
         search_value = f"%{query}%"
 
         with self._connect() as connection:
@@ -97,10 +99,27 @@ class MemoryStore:
                 FROM memories
                 WHERE key LIKE ? OR value LIKE ? OR category LIKE ?
                 ORDER BY id DESC
+                LIMIT ?
                 """,
-                (search_value, search_value, search_value),
+                (search_value, search_value, search_value, limit),
             )
 
             rows = cursor.fetchall()
 
         return [dict(row) for row in rows]
+
+    def get_memory_context(self, query: str, limit: int = 8) -> list[dict]:
+        """
+        First tries to find memories related to the user query.
+        If no direct match is found, returns recent memories as fallback.
+
+        This is a simple v0.2 memory retrieval system.
+        Later, this will be replaced or improved with vector search / RAG.
+        """
+
+        matched_memories = self.search_memories(query=query, limit=limit)
+
+        if matched_memories:
+            return matched_memories
+
+        return self.list_memories(limit=limit)

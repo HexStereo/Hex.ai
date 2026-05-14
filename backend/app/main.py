@@ -9,7 +9,7 @@ from app.schemas.memory import MemoryCreate, MemoryItem
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.1.0",
+    version="0.2.0",
 )
 
 ollama_client = OllamaClient()
@@ -20,7 +20,7 @@ memory_store = MemoryStore()
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.1.0",
+        "version": "0.2.0",
         "status": "running",
         "message": "Hex.ai backend is alive."
     }
@@ -36,14 +36,24 @@ def health_check():
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
     try:
+        memories = []
+
+        if request.use_memory:
+            memories = memory_store.get_memory_context(
+                query=request.message,
+                limit=8
+            )
+
         response_text = ollama_client.generate(
             prompt=request.message,
-            model=request.model
+            model=request.model,
+            memories=memories
         )
 
         return ChatResponse(
             model=request.model or settings.DEFAULT_MODEL,
-            response=response_text
+            response=response_text,
+            memory_used=len(memories)
         )
 
     except RuntimeError as exc:
@@ -60,10 +70,10 @@ def create_memory(memory: MemoryCreate):
 
 
 @app.get("/memory", response_model=list[MemoryItem])
-def list_memories():
-    return memory_store.list_memories()
+def list_memories(limit: int = 50):
+    return memory_store.list_memories(limit=limit)
 
 
 @app.get("/memory/search", response_model=list[MemoryItem])
-def search_memories(query: str):
-    return memory_store.search_memories(query=query)
+def search_memories(query: str, limit: int = 10):
+    return memory_store.search_memories(query=query, limit=limit)

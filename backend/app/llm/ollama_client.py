@@ -8,9 +8,32 @@ class OllamaClient:
     def __init__(self, base_url: str | None = None):
         self.base_url = base_url or settings.OLLAMA_BASE_URL
 
-    def build_prompt(self, user_message: str) -> str:
+    def build_memory_context(self, memories: list[dict] | None = None) -> str:
+        if not memories:
+            return "No stored memory was provided for this request."
+
+        memory_lines = []
+
+        for memory in memories:
+            memory_lines.append(
+                f"- [{memory.get('category')}] {memory.get('key')}: {memory.get('value')}"
+            )
+
+        return "\n".join(memory_lines)
+
+    def build_prompt(self, user_message: str, memories: list[dict] | None = None) -> str:
+        memory_context = self.build_memory_context(memories)
+
         return f"""
 {HEXAI_SYSTEM_PROMPT}
+
+Stored memory context:
+{memory_context}
+
+Instruction:
+Use the stored memory context only if it is relevant to the user's message.
+If the memory context is not relevant, ignore it.
+Do not invent memories that are not provided.
 
 User message:
 {user_message}
@@ -18,14 +41,22 @@ User message:
 Hex.ai response:
 """.strip()
 
-    def generate(self, prompt: str, model: str | None = None) -> str:
+    def generate(
+        self,
+        prompt: str,
+        model: str | None = None,
+        memories: list[dict] | None = None
+    ) -> str:
         selected_model = model or settings.DEFAULT_MODEL
 
         url = f"{self.base_url}/api/generate"
 
         payload = {
             "model": selected_model,
-            "prompt": self.build_prompt(prompt),
+            "prompt": self.build_prompt(
+                user_message=prompt,
+                memories=memories
+            ),
             "stream": False,
             "options": {
                 "temperature": 0.3,
