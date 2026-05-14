@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+
+# Environment files
+.env
+
+# Logs
+*.log
+
+# Hex.ai private data
+data/documents/*
+data/memory/*
+data/vector_db/*
+
+# Keep folder structure
+!data/documents/.gitkeep
+!data/memory/.gitkeep
+!data/vector_db/.gitkeep
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
+dist/
+build/
+*.egg-info/
