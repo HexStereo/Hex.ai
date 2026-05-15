@@ -2,7 +2,7 @@
 
 Hex.ai is a local-first personal AI assistant project.
 
-The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, and performs controlled tool-based actions.
+The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, and provides system diagnostics.
 
 Hex.ai is not just a chatbot. It is being developed as a private personal AI assistant backend that can evolve into a Jarvis-like local AI system.
 
@@ -10,9 +10,9 @@ Hex.ai is not just a chatbot. It is being developed as a private personal AI ass
 
 ## Current Version
 
-Current version: `v0.9`
+Current version: `v1.0.0`
 
-Current status: active local development.
+Current status: local backend MVP.
 
 ---
 
@@ -47,6 +47,10 @@ Hex.ai currently includes:
 - Confirmation-required command execution
 - Read-only command auto-approval
 - High-risk system command blocking
+- System diagnostics endpoint
+- Ollama reachability check
+- Local model listing
+- Path status checks for memory, documents, and vector database folders
 
 ---
 
@@ -64,10 +68,11 @@ Hex.ai is designed to assist with:
 - Document-based question answering
 - Local file inspection
 - Local command execution with permission control
+- System status inspection
 - Local database usage in future versions
 - Controlled automation in future versions
 
-The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, and later support voice interaction.
+The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, and later support voice interaction.
 
 ---
 
@@ -183,10 +188,15 @@ Hex.ai/
 │   │   │   ├── document.py
 │   │   │   ├── tool.py
 │   │   │   ├── codebase.py
-│   │   │   └── command.py
+│   │   │   ├── command.py
+│   │   │   └── system.py
 │   │   │
 │   │   ├── security/
 │   │   │   └── command_policy.py
+│   │   │
+│   │   ├── system/
+│   │   │   ├── __init__.py
+│   │   │   └── diagnostics.py
 │   │   │
 │   │   ├── tools/
 │   │   │   ├── file_tools.py
@@ -225,7 +235,7 @@ FastAPI Backend
         ↓
 Core API Layer
         ↓
-LLM Layer + Memory Layer + RAG Layer + Tool Layer
+LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics
         ↓
 Ollama + SQLite + Local Files + Controlled Commands
 ```
@@ -245,7 +255,7 @@ backend/app/main.py
 Responsibilities:
 
 - Exposes API endpoints
-- Routes requests to memory, RAG, file tools, codebase tools, command tools, and LLM layer
+- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, and LLM layer
 - Provides Swagger documentation
 - Returns structured JSON responses
 
@@ -470,7 +480,37 @@ I_CONFIRM_HEXAI_FULL_ACCESS
 
 ---
 
-### 8. Security Layer
+### 8. System Diagnostics
+
+Location:
+
+```text
+backend/app/system/
+```
+
+Main file:
+
+```text
+diagnostics.py
+```
+
+Current capabilities:
+
+- Shows app name
+- Shows app environment
+- Shows backend version
+- Shows project root
+- Shows default chat model
+- Shows embedding model
+- Checks memory DB path
+- Checks documents path
+- Checks vector DB path
+- Checks Ollama reachability
+- Lists installed Ollama models
+
+---
+
+### 9. Security Layer
 
 Location:
 
@@ -503,6 +543,12 @@ Responsibilities:
 GET  /
 GET  /health
 POST /chat
+```
+
+### System
+
+```text
+GET /system/info
 ```
 
 ### Memory
@@ -765,6 +811,28 @@ Expected response:
 ```json
 {
   "status": "ok"
+}
+```
+
+---
+
+### System Info
+
+Endpoint:
+
+```text
+GET /system/info
+```
+
+Expected response includes:
+
+```json
+{
+  "app_name": "Hex.ai",
+  "app_env": "development",
+  "version": "1.0.0",
+  "default_model": "qwen2.5-coder:14b",
+  "embedding_model": "nomic-embed-text"
 }
 ```
 
@@ -1090,12 +1158,6 @@ Implemented:
 - Document search
 - Document-aware chat
 
-Limitations at that stage:
-
-- Keyword search only
-- No embeddings
-- No semantic retrieval
-
 ---
 
 ### v0.4 — Safe File Tools
@@ -1194,23 +1256,24 @@ Implemented:
 
 ---
 
-## Planned Roadmap
+### v1.0 — Backend MVP Stabilization
 
-### v1.0 — Local Personal AI Assistant Backend MVP
+Status: Done
 
-Planned:
+Implemented:
 
-- Stable local chat
-- Persistent memory
-- Semantic RAG
-- Safe file tools
-- Codebase analysis
-- Command permission engine
-- Cleaner internal orchestration
-- Better API documentation
-- Better error handling
+- Added centralized backend version
+- Added system diagnostics module
+- Added `/system/info`
+- Added Ollama reachability check
+- Added local Ollama model listing
+- Added memory path status check
+- Added documents path status check
+- Added vector database path status check
 
 ---
+
+## Planned Roadmap
 
 ### v1.1 — Agent Orchestration Layer
 
