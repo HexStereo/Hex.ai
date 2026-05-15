@@ -10,7 +10,13 @@ from app.schemas.codebase import (
     CodebaseAnalyzeResponse,
     CodebaseFilesResponse,
 )
-from app.schemas.command import CommandRunRequest, CommandRunResponse
+from app.schemas.command import (
+    CommandConfirmedRunRequest,
+    CommandPlanRequest,
+    CommandPlanResponse,
+    CommandRunRequest,
+    CommandRunResponse,
+)
 from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
@@ -18,11 +24,13 @@ from app.tools.codebase_tools import CodebaseTools
 from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
+
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.8.0",
+    version="0.9.0",
 )
+
 
 ollama_client = OllamaClient()
 memory_store = MemoryStore()
@@ -36,16 +44,16 @@ command_tools = CommandTools()
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.8.0",
+        "version": "0.9.0",
         "status": "running",
-        "message": "Hex.ai backend is alive."
+        "message": "Hex.ai backend is alive.",
     }
 
 
 @app.get("/health")
 def health_check():
     return {
-        "status": "ok"
+        "status": "ok",
     }
 
 
@@ -59,7 +67,7 @@ def chat(request: ChatRequest):
         if request.use_memory:
             memories = memory_store.get_memory_context(
                 query=request.message,
-                limit=8
+                limit=8,
             )
 
         if request.use_documents:
@@ -71,7 +79,7 @@ def chat(request: ChatRequest):
             documents = document_store.get_document_context(
                 query=request.message,
                 query_embedding=query_embedding,
-                limit=5
+                limit=5,
             )
 
         response_text = ollama_client.generate(
@@ -108,7 +116,10 @@ def list_memories(limit: int = 50):
 
 @app.get("/memory/search", response_model=list[MemoryItem])
 def search_memories(query: str, limit: int = 10):
-    return memory_store.search_memories(query=query, limit=limit)
+    return memory_store.search_memories(
+        query=query,
+        limit=limit,
+    )
 
 
 @app.post("/documents/ingest", response_model=DocumentIngestResponse)
@@ -149,7 +160,12 @@ def search_documents(query: str, limit: int = 8):
 
 
 @app.get("/tools/files/list", response_model=DirectoryListResponse)
-def list_files(path: str = Query(default=".", description="Project-relative directory path")):
+def list_files(
+    path: str = Query(
+        default=".",
+        description="Project-relative directory path",
+    )
+):
     try:
         return file_tools.list_directory(path)
 
@@ -164,7 +180,12 @@ def list_files(path: str = Query(default=".", description="Project-relative dire
 
 
 @app.get("/tools/files/read", response_model=FileReadResponse)
-def read_file(path: str = Query(..., description="Project-relative file path")):
+def read_file(
+    path: str = Query(
+        ...,
+        description="Project-relative file path",
+    )
+):
     try:
         return file_tools.read_file(path)
 
@@ -180,8 +201,15 @@ def read_file(path: str = Query(..., description="Project-relative file path")):
 
 @app.get("/tools/codebase/files", response_model=CodebaseFilesResponse)
 def list_codebase_files(
-    path: str = Query(default=".", description="Project-relative codebase path"),
-    max_files: int = Query(default=25, ge=1, le=80),
+    path: str = Query(
+        default=".",
+        description="Project-relative codebase path",
+    ),
+    max_files: int = Query(
+        default=25,
+        ge=1,
+        le=80,
+    ),
 ):
     try:
         context = codebase_tools.collect_code_context(
@@ -254,7 +282,7 @@ def analyze_codebase(request: CodebaseAnalyzeRequest):
 @app.get("/tools/commands/allowed")
 def list_allowed_commands():
     return {
-        "allowed_commands": command_tools.get_allowed_commands()
+        "allowed_commands": command_tools.get_allowed_commands(),
     }
 
 
@@ -264,6 +292,43 @@ def run_command(request: CommandRunRequest):
         return command_tools.run_command(
             command_key=request.command_key,
             cwd=request.cwd,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/tools/commands/plan", response_model=CommandPlanResponse)
+def plan_command(request: CommandPlanRequest):
+    try:
+        return command_tools.plan_command(
+            command=request.command,
+            cwd=request.cwd,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/tools/commands/run-confirmed", response_model=CommandRunResponse)
+def run_confirmed_command(request: CommandConfirmedRunRequest):
+    try:
+        return command_tools.run_confirmed_command(
+            command=request.command,
+            cwd=request.cwd,
+            confirmation_phrase=request.confirmation_phrase,
         )
 
     except PermissionError as exc:
