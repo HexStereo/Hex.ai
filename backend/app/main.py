@@ -19,16 +19,21 @@ from app.schemas.command import (
 )
 from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
+from app.schemas.system import SystemInfoResponse
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
+from app.system.diagnostics import SystemDiagnostics
 from app.tools.codebase_tools import CodebaseTools
 from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
+APP_VERSION = "1.0.0"
+
+
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.9.0",
+    version=APP_VERSION,
 )
 
 
@@ -38,13 +43,14 @@ document_store = DocumentStore()
 file_tools = FileTools()
 codebase_tools = CodebaseTools()
 command_tools = CommandTools()
+system_diagnostics = SystemDiagnostics(version=APP_VERSION)
 
 
 @app.get("/")
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.9.0",
+        "version": APP_VERSION,
         "status": "running",
         "message": "Hex.ai backend is alive.",
     }
@@ -55,6 +61,11 @@ def health_check():
     return {
         "status": "ok",
     }
+
+
+@app.get("/system/info", response_model=SystemInfoResponse)
+def system_info():
+    return system_diagnostics.get_system_info()
 
 
 @app.post("/chat", response_model=ChatResponse)
