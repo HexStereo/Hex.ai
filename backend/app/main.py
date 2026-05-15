@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
@@ -7,23 +7,26 @@ from app.rag.document_store import DocumentStore
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
+from app.schemas.tool import DirectoryListResponse, FileReadResponse
+from app.tools.file_tools import FileTools
 
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 ollama_client = OllamaClient()
 memory_store = MemoryStore()
 document_store = DocumentStore()
+file_tools = FileTools()
 
 
 @app.get("/")
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.3.0",
+        "version": "0.4.0",
         "status": "running",
         "message": "Hex.ai backend is alive."
     }
@@ -104,3 +107,33 @@ def search_documents(query: str, limit: int = 8):
         query=query,
         results=results,
     )
+
+
+@app.get("/tools/files/list", response_model=DirectoryListResponse)
+def list_files(path: str = Query(default=".", description="Project-relative directory path")):
+    try:
+        return file_tools.list_directory(path)
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/tools/files/read", response_model=FileReadResponse)
+def read_file(path: str = Query(..., description="Project-relative file path")):
+    try:
+        return file_tools.read_file(path)
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except IsADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
