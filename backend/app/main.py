@@ -5,28 +5,35 @@ from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
 from app.rag.document_store import DocumentStore
 from app.schemas.chat import ChatRequest, ChatResponse
+from app.schemas.codebase import (
+    CodebaseAnalyzeRequest,
+    CodebaseAnalyzeResponse,
+    CodebaseFilesResponse,
+)
 from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
+from app.tools.codebase_tools import CodebaseTools
 from app.tools.file_tools import FileTools
 
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 ollama_client = OllamaClient()
 memory_store = MemoryStore()
 document_store = DocumentStore()
 file_tools = FileTools()
+codebase_tools = CodebaseTools()
 
 
 @app.get("/")
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.4.0",
+        "version": "0.5.0",
         "status": "running",
         "message": "Hex.ai backend is alive."
     }
@@ -137,3 +144,76 @@ def read_file(path: str = Query(..., description="Project-relative file path")):
 
     except IsADirectoryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/tools/codebase/files", response_model=CodebaseFilesResponse)
+def list_codebase_files(
+    path: str = Query(default=".", description="Project-relative codebase path"),
+    max_files: int = Query(default=25, ge=1, le=80),
+):
+    try:
+        context = codebase_tools.collect_code_context(
+            input_path=path,
+            max_files=max_files,
+            max_chars_per_file=500,
+            max_total_chars=10000,
+        )
+
+        return CodebaseFilesResponse(
+            path=context["path"],
+            file_count=context["file_count"],
+            files=context["files"],
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/tools/codebase/analyze", response_model=CodebaseAnalyzeResponse)
+def analyze_codebase(request: CodebaseAnalyzeRequest):
+    try:
+        context = codebase_tools.collect_code_context(
+            input_path=request.path,
+            max_files=request.max_files,
+            max_chars_per_file=request.max_chars_per_file,
+            max_total_chars=request.max_total_chars,
+        )
+
+        analysis_prompt = codebase_tools.build_analysis_prompt(
+            code_context=context,
+            focus=request.focus,
+        )
+
+        response_text = ollama_client.generate(
+            prompt=analysis_prompt,
+            model=request.model,
+            memories=[],
+            documents=[],
+        )
+
+        return CodebaseAnalyzeResponse(
+            model=request.model or settings.DEFAULT_MODEL,
+            path=context["path"],
+            files_analyzed=context["file_count"],
+            total_chars=context["total_chars"],
+            files=context["files"],
+            response=response_text,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
