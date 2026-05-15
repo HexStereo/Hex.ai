@@ -19,6 +19,7 @@ class Settings:
 
     MEMORY_DB_PATH: str = os.getenv("MEMORY_DB_PATH", "./data/memory/hexai_memory.db")
     VECTOR_DB_PATH: str = os.getenv("VECTOR_DB_PATH", "./data/vector_db")
+    DOCUMENTS_PATH: str = os.getenv("DOCUMENTS_PATH", "./data/documents")
 
     ALLOW_COMMAND_EXECUTION: bool = os.getenv("ALLOW_COMMAND_EXECUTION", "false").lower() == "true"
 

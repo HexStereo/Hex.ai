@@ -21,8 +21,32 @@ class OllamaClient:
 
         return "\n".join(memory_lines)
 
-    def build_prompt(self, user_message: str, memories: list[dict] | None = None) -> str:
+    def build_document_context(self, documents: list[dict] | None = None) -> str:
+        if not documents:
+            return "No document context was provided for this request."
+
+        document_lines = []
+
+        for document in documents:
+            document_lines.append(
+                f"""
+Source: {document.get("source_path")}
+Chunk: {document.get("chunk_index")}
+Content:
+{document.get("content")}
+""".strip()
+            )
+
+        return "\n\n---\n\n".join(document_lines)
+
+    def build_prompt(
+        self,
+        user_message: str,
+        memories: list[dict] | None = None,
+        documents: list[dict] | None = None,
+    ) -> str:
         memory_context = self.build_memory_context(memories)
+        document_context = self.build_document_context(documents)
 
         return f"""
 {HEXAI_SYSTEM_PROMPT}
@@ -30,10 +54,14 @@ class OllamaClient:
 Stored memory context:
 {memory_context}
 
+Document context:
+{document_context}
+
 Instruction:
-Use the stored memory context only if it is relevant to the user's message.
-If the memory context is not relevant, ignore it.
-Do not invent memories that are not provided.
+Use stored memory and document context only if relevant to the user's message.
+If the context is not relevant, ignore it.
+Do not invent memories, files, or document content that are not provided.
+If the answer depends on missing information, say what is missing.
 
 User message:
 {user_message}
@@ -45,7 +73,8 @@ Hex.ai response:
         self,
         prompt: str,
         model: str | None = None,
-        memories: list[dict] | None = None
+        memories: list[dict] | None = None,
+        documents: list[dict] | None = None,
     ) -> str:
         selected_model = model or settings.DEFAULT_MODEL
 
@@ -55,7 +84,8 @@ Hex.ai response:
             "model": selected_model,
             "prompt": self.build_prompt(
                 user_message=prompt,
-                memories=memories
+                memories=memories,
+                documents=documents,
             ),
             "stream": False,
             "options": {
