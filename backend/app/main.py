@@ -10,16 +10,18 @@ from app.schemas.codebase import (
     CodebaseAnalyzeResponse,
     CodebaseFilesResponse,
 )
+from app.schemas.command import CommandRunRequest, CommandRunResponse
 from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
 from app.tools.codebase_tools import CodebaseTools
+from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 ollama_client = OllamaClient()
@@ -27,13 +29,14 @@ memory_store = MemoryStore()
 document_store = DocumentStore()
 file_tools = FileTools()
 codebase_tools = CodebaseTools()
+command_tools = CommandTools()
 
 
 @app.get("/")
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.7.0",
+        "version": "0.8.0",
         "status": "running",
         "message": "Hex.ai backend is alive."
     }
@@ -246,3 +249,28 @@ def analyze_codebase(request: CodebaseAnalyzeRequest):
 
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.get("/tools/commands/allowed")
+def list_allowed_commands():
+    return {
+        "allowed_commands": command_tools.get_allowed_commands()
+    }
+
+
+@app.post("/tools/commands/run", response_model=CommandRunResponse)
+def run_command(request: CommandRunRequest):
+    try:
+        return command_tools.run_command(
+            command_key=request.command_key,
+            cwd=request.cwd,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
