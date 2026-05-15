@@ -1,6 +1,9 @@
+import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from app.config import PROJECT_ROOT, settings
 
@@ -59,6 +62,19 @@ class DocumentStore:
                 """
             )
 
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS document_embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chunk_id INTEGER NOT NULL UNIQUE,
+                    embedding_model TEXT NOT NULL,
+                    embedding_json TEXT NOT NULL,
+                    dimension INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
             connection.commit()
 
     def chunk_text(self, text: str, chunk_size: int = 1800, overlap: int = 200) -> list[str]:
@@ -98,6 +114,16 @@ class DocumentStore:
 
             cursor.execute(
                 """
+                DELETE FROM document_embeddings
+                WHERE chunk_id IN (
+                    SELECT id FROM document_chunks WHERE source_path = ?
+                )
+                """,
+                (relative_path,),
+            )
+
+            cursor.execute(
+                """
                 DELETE FROM document_chunks
                 WHERE source_path = ?
                 """,
@@ -106,9 +132,14 @@ class DocumentStore:
 
             connection.commit()
 
-    def ingest_documents(self) -> dict:
+    def ingest_documents(
+        self,
+        embedder: Callable[[str], list[float]] | None = None,
+        embedding_model: str | None = None,
+    ) -> dict:
         files_processed = 0
         chunks_created = 0
+        embeddings_created = 0
 
         for file_path in self.documents_path.rglob("*"):
             if not file_path.is_file():
@@ -140,7 +171,33 @@ class DocumentStore:
                         (relative_path, index, chunk, now),
                     )
 
+                    chunk_id = cursor.lastrowid
                     chunks_created += 1
+
+                    if embedder is not None:
+                        embedding = embedder(chunk)
+
+                        cursor.execute(
+                            """
+                            INSERT INTO document_embeddings (
+                                chunk_id,
+                                embedding_model,
+                                embedding_json,
+                                dimension,
+                                created_at
+                            )
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                chunk_id,
+                                embedding_model or settings.EMBEDDING_MODEL,
+                                json.dumps(embedding),
+                                len(embedding),
+                                now,
+                            ),
+                        )
+
+                        embeddings_created += 1
 
                 connection.commit()
 
@@ -149,6 +206,8 @@ class DocumentStore:
         return {
             "files_processed": files_processed,
             "chunks_created": chunks_created,
+            "embeddings_created": embeddings_created,
+            "embedding_model": embedding_model or settings.EMBEDDING_MODEL,
             "supported_extensions": sorted(SUPPORTED_EXTENSIONS),
         }
 
@@ -187,11 +246,6 @@ class DocumentStore:
         return terms
 
     def search_documents(self, query: str, limit: int = 8) -> list[dict]:
-        """
-        Simple keyword-based document search for RAG v0.1.
-        This is not semantic search yet.
-        """
-
         terms = self._extract_search_terms(query)
 
         if not terms:
@@ -208,7 +262,7 @@ class DocumentStore:
         where_clause = " OR ".join(where_parts)
 
         sql = f"""
-            SELECT id, source_path, chunk_index, content, created_at
+            SELECT id, source_path, chunk_index, content, created_at, NULL as score
             FROM document_chunks
             WHERE {where_clause}
             ORDER BY id DESC
@@ -225,6 +279,59 @@ class DocumentStore:
 
         return [dict(row) for row in rows]
 
+    def _cosine_similarity(self, vector_a: list[float], vector_b: list[float]) -> float:
+        if not vector_a or not vector_b:
+            return 0.0
+
+        if len(vector_a) != len(vector_b):
+            return 0.0
+
+        dot_product = sum(a * b for a, b in zip(vector_a, vector_b))
+        norm_a = math.sqrt(sum(a * a for a in vector_a))
+        norm_b = math.sqrt(sum(b * b for b in vector_b))
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return dot_product / (norm_a * norm_b)
+
+    def semantic_search_documents(self, query_embedding: list[float], limit: int = 8) -> list[dict]:
+        with self._connect() as connection:
+            connection.row_factory = sqlite3.Row
+            cursor = connection.cursor()
+
+            cursor.execute(
+                """
+                SELECT
+                    document_chunks.id,
+                    document_chunks.source_path,
+                    document_chunks.chunk_index,
+                    document_chunks.content,
+                    document_chunks.created_at,
+                    document_embeddings.embedding_json
+                FROM document_chunks
+                INNER JOIN document_embeddings
+                    ON document_embeddings.chunk_id = document_chunks.id
+                """
+            )
+
+            rows = cursor.fetchall()
+
+        scored_results = []
+
+        for row in rows:
+            row_dict = dict(row)
+            stored_embedding = json.loads(row_dict.pop("embedding_json"))
+
+            score = self._cosine_similarity(query_embedding, stored_embedding)
+            row_dict["score"] = round(score, 6)
+
+            scored_results.append(row_dict)
+
+        scored_results.sort(key=lambda item: item["score"], reverse=True)
+
+        return scored_results[:limit]
+
     def list_recent_chunks(self, limit: int = 5) -> list[dict]:
         with self._connect() as connection:
             connection.row_factory = sqlite3.Row
@@ -232,7 +339,7 @@ class DocumentStore:
 
             cursor.execute(
                 """
-                SELECT id, source_path, chunk_index, content, created_at
+                SELECT id, source_path, chunk_index, content, created_at, NULL as score
                 FROM document_chunks
                 ORDER BY id DESC
                 LIMIT ?
@@ -244,16 +351,20 @@ class DocumentStore:
 
         return [dict(row) for row in rows]
 
-    def get_document_context(self, query: str, limit: int = 5) -> list[dict]:
-        """
-        RAG v0.1 retrieval strategy:
+    def get_document_context(
+        self,
+        query: str,
+        query_embedding: list[float] | None = None,
+        limit: int = 5,
+    ) -> list[dict]:
+        if query_embedding is not None:
+            semantic_results = self.semantic_search_documents(
+                query_embedding=query_embedding,
+                limit=limit,
+            )
 
-        1. Search using the user's message.
-        2. If nothing is found, try project-specific fallback keywords.
-        3. If still nothing is found, return recent chunks.
-
-        Later this will be replaced with vector search.
-        """
+            if semantic_results:
+                return semantic_results
 
         results = self.search_documents(query=query, limit=limit)
 

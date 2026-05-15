@@ -19,7 +19,7 @@ from app.tools.file_tools import FileTools
 app = FastAPI(
     title="Hex.ai Backend",
     description="Local-first personal AI assistant backend.",
-    version="0.5.0",
+    version="0.7.0",
 )
 
 ollama_client = OllamaClient()
@@ -33,7 +33,7 @@ codebase_tools = CodebaseTools()
 def root():
     return {
         "app": settings.APP_NAME,
-        "version": "0.5.0",
+        "version": "0.7.0",
         "status": "running",
         "message": "Hex.ai backend is alive."
     }
@@ -51,6 +51,7 @@ def chat(request: ChatRequest):
     try:
         memories = []
         documents = []
+        query_embedding = None
 
         if request.use_memory:
             memories = memory_store.get_memory_context(
@@ -59,8 +60,14 @@ def chat(request: ChatRequest):
             )
 
         if request.use_documents:
+            try:
+                query_embedding = ollama_client.embed(request.message)
+            except RuntimeError:
+                query_embedding = None
+
             documents = document_store.get_document_context(
                 query=request.message,
+                query_embedding=query_embedding,
                 limit=5
             )
 
@@ -103,15 +110,37 @@ def search_memories(query: str, limit: int = 10):
 
 @app.post("/documents/ingest", response_model=DocumentIngestResponse)
 def ingest_documents():
-    return document_store.ingest_documents()
+    try:
+        return document_store.ingest_documents(
+            embedder=ollama_client.embed,
+            embedding_model=settings.EMBEDDING_MODEL,
+        )
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @app.get("/documents/search", response_model=DocumentSearchResponse)
 def search_documents(query: str, limit: int = 8):
-    results = document_store.search_documents(query=query, limit=limit)
+    query_embedding = None
+    search_type = "keyword"
+
+    try:
+        query_embedding = ollama_client.embed(query)
+        search_type = "semantic"
+    except RuntimeError:
+        query_embedding = None
+        search_type = "keyword"
+
+    results = document_store.get_document_context(
+        query=query,
+        query_embedding=query_embedding,
+        limit=limit,
+    )
 
     return DocumentSearchResponse(
         query=query,
+        search_type=search_type,
         results=results,
     )
 

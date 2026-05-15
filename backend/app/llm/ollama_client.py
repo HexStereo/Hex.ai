@@ -28,10 +28,15 @@ class OllamaClient:
         document_lines = []
 
         for document in documents:
+            score_text = ""
+
+            if document.get("score") is not None:
+                score_text = f"\nSimilarity score: {document.get('score')}"
+
             document_lines.append(
                 f"""
 Source: {document.get("source_path")}
-Chunk: {document.get("chunk_index")}
+Chunk: {document.get("chunk_index")}{score_text}
 Content:
 {document.get("content")}
 """.strip()
@@ -115,3 +120,40 @@ Hex.ai response:
 
         data = response.json()
         return data.get("response", "")
+
+    def embed(self, text: str, model: str | None = None) -> list[float]:
+        selected_model = model or settings.EMBEDDING_MODEL
+
+        url = f"{self.base_url}/api/embeddings"
+
+        payload = {
+            "model": selected_model,
+            "prompt": text
+        }
+
+        try:
+            response = requests.post(url, json=payload, timeout=120)
+            response.raise_for_status()
+
+        except requests.exceptions.ConnectionError as exc:
+            raise RuntimeError(
+                "Ollama is not reachable. Make sure Ollama is running."
+            ) from exc
+
+        except requests.exceptions.Timeout as exc:
+            raise RuntimeError(
+                "Ollama embedding request timed out."
+            ) from exc
+
+        except requests.exceptions.RequestException as exc:
+            raise RuntimeError(
+                f"Ollama embedding request failed: {exc}"
+            ) from exc
+
+        data = response.json()
+        embedding = data.get("embedding")
+
+        if not embedding:
+            raise RuntimeError("Ollama did not return an embedding vector.")
+
+        return embedding
