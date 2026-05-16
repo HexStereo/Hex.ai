@@ -2,7 +2,7 @@
 
 Hex.ai is a local-first personal AI assistant project.
 
-The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, and executes safe planned actions.
+The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, executes safe planned actions, and executes approved risky actions only after explicit confirmation.
 
 Hex.ai is not just a chatbot. It is being developed as a private personal AI assistant backend that can evolve into a Jarvis-like local AI system.
 
@@ -10,9 +10,9 @@ Hex.ai is not just a chatbot. It is being developed as a private personal AI ass
 
 ## Current Version
 
-Current version: `v1.2.0`
+Current version: `v1.3.0`
 
-Current status: local backend MVP with agent planning and safe agent execution.
+Current status: local backend MVP with agent planning, safe agent execution, and confirmed command execution.
 
 ---
 
@@ -60,6 +60,9 @@ Hex.ai currently includes:
 - Safe execution of memory search
 - Safe execution of chat
 - Risk-aware blocking for commands that require confirmation
+- Confirmed agent command execution endpoint
+- Explicit confirmation phrase validation for risky commands
+- System-high-risk command blocking even when confirmation is provided
 
 ---
 
@@ -80,10 +83,11 @@ Hex.ai is designed to assist with:
 - System status inspection
 - Intent routing
 - Safe agent execution
+- Confirmed risky command execution
 - Local database usage in future versions
 - Controlled automation in future versions
 
-The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, and later support voice interaction.
+The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, execute approved higher-risk tasks only after explicit confirmation, and later support voice interaction.
 
 ---
 
@@ -99,6 +103,8 @@ Hex.ai follows these principles:
 - Permission-based risk handling
 - Clear intent routing
 - Safe execution before autonomy
+- Explicit confirmation before risky actions
+- System-level destructive action blocking
 - No accidental upload of private data
 - Small working modules before complex autonomy
 - Versioned development
@@ -271,7 +277,7 @@ AgentOrchestrator classifies intent
 Returns target endpoint, method, parameters, reason, and warnings
 ```
 
-Current execution flow:
+Current safe execution flow:
 
 ```text
 User message
@@ -284,7 +290,29 @@ Intent is detected
     ↓
 Safe internal capability is executed
     ↓
+Risky command is stopped before execution
+    ↓
 Result is returned in a unified response object
+```
+
+Current confirmed command execution flow:
+
+```text
+User command message
+    ↓
+POST /agent/execute-confirmed
+    ↓
+AgentExecutor calls AgentOrchestrator
+    ↓
+Command intent is detected
+    ↓
+Command risk is classified
+    ↓
+If confirmation is required, confirmation phrase is checked
+    ↓
+If allowed and correctly confirmed, command is executed
+    ↓
+If system-high-risk, command remains blocked
 ```
 
 ---
@@ -375,20 +403,23 @@ Responsibilities:
 - Executes memory search
 - Executes chat
 - Stops when a command requires confirmation
+- Executes confirmed commands through a dedicated confirmation flow
 - Returns a unified execution response
 
-Current execution endpoint:
+Current execution endpoints:
 
 ```text
 POST /agent/execute
+POST /agent/execute-confirmed
 ```
 
 Important behavior:
 
 ```text
 Safe read-only commands can be auto-executed.
-Commands requiring confirmation are not auto-executed.
-System high-risk commands remain blocked.
+Commands requiring confirmation are not auto-executed by /agent/execute.
+Commands requiring confirmation can be executed by /agent/execute-confirmed only with the correct phrase.
+System-high-risk commands remain blocked even when confirmation is provided.
 ```
 
 ---
@@ -682,6 +713,7 @@ POST /chat
 ```text
 POST /agent/plan
 POST /agent/execute
+POST /agent/execute-confirmed
 ```
 
 ### System
@@ -969,7 +1001,7 @@ Expected response includes:
 {
   "app_name": "Hex.ai",
   "app_env": "development",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "default_model": "qwen2.5-coder:14b",
   "embedding_model": "nomic-embed-text"
 }
@@ -1155,6 +1187,89 @@ Expected result:
 {
   "intent": "CHAT",
   "executed": true
+}
+```
+
+---
+
+### Agent Execute Confirmed
+
+Endpoint:
+
+```text
+POST /agent/execute-confirmed
+```
+
+Confirmed execution is only for command planning intents.
+
+Risky command without confirmation:
+
+```json
+{
+  "message": "command: echo Hex.ai confirmed test > data\\documents\\confirmed_agent_test.txt",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "confirmation_phrase": null
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "COMMAND_PLAN",
+  "executed": false,
+  "requires_confirmation": true
+}
+```
+
+Risky command with correct confirmation:
+
+```json
+{
+  "message": "command: echo Hex.ai confirmed test > data\\documents\\confirmed_agent_test.txt",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "confirmation_phrase": "I_CONFIRM_HEXAI_COMMAND"
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "COMMAND_PLAN",
+  "executed": true,
+  "requires_confirmation": false
+}
+```
+
+System-high-risk command example:
+
+```json
+{
+  "message": "command: format C:",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "confirmation_phrase": "I_CONFIRM_HEXAI_FULL_ACCESS"
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "COMMAND_PLAN",
+  "executed": false
+}
+```
+
+Expected command plan:
+
+```json
+{
+  "risk_level": "SYSTEM_HIGH_RISK",
+  "allowed_to_run": false
 }
 ```
 
@@ -1635,21 +1750,40 @@ Implemented:
 
 ---
 
-## Planned Roadmap
-
 ### v1.3 — Command Confirmation Execution Flow
 
-Planned:
+Status: Done
 
-- Add explicit confirmed agent command execution
-- Add confirmation token or phrase validation at agent level
-- Add audit log for executed commands
-- Add command history storage
-- Add safer execution trace records
+Implemented:
+
+- Added `/agent/execute-confirmed`
+- Added confirmed agent execution schema
+- Added agent-level confirmed command execution
+- Added confirmation phrase requirement for risky allowed commands
+- Added no-confirmation stopping behavior
+- Added confirmed execution for allowed risky commands
+- Preserved system-high-risk blocking even with full access confirmation phrase
+- Tested confirmed file creation through controlled command execution
+- Tested blocked `format C:` behavior
 
 ---
 
-### v1.4 — Project-Specific Modules
+## Planned Roadmap
+
+### v1.4 — Command Audit Logging
+
+Planned:
+
+- Add command execution audit records
+- Store command history in SQLite
+- Store command risk level, command text, cwd, result code, timestamp, and execution status
+- Add `/tools/commands/history`
+- Add `/agent/command-history`
+- Add safer traceability for confirmed executions
+
+---
+
+### v1.5 — Project-Specific Modules
 
 Planned:
 
@@ -1661,7 +1795,7 @@ Planned:
 
 ---
 
-### v1.5 — UI Layer
+### v1.6 — UI Layer
 
 Planned:
 
@@ -1674,7 +1808,7 @@ Planned:
 
 ---
 
-### v1.6 — Voice Layer
+### v1.7 — Voice Layer
 
 Planned:
 
@@ -1710,7 +1844,8 @@ Current limitations:
 
 - No autonomous agent loop yet
 - `/agent/execute` executes only safe internal flows
-- Commands requiring confirmation are not executed automatically
+- Commands requiring confirmation are not executed automatically by `/agent/execute`
+- `/agent/execute-confirmed` currently supports confirmed command execution only
 - No full command audit log yet
 - No voice system yet
 - No UI except Swagger
