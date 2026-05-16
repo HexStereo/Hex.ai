@@ -1,9 +1,11 @@
 from fastapi import FastAPI, HTTPException, Query
 
+from app.agent.orchestrator import AgentOrchestrator
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
 from app.rag.document_store import DocumentStore
+from app.schemas.agent import AgentPlanRequest, AgentPlanResponse
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.codebase import (
     CodebaseAnalyzeRequest,
@@ -27,7 +29,7 @@ from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 
 
 app = FastAPI(
@@ -44,6 +46,7 @@ file_tools = FileTools()
 codebase_tools = CodebaseTools()
 command_tools = CommandTools()
 system_diagnostics = SystemDiagnostics(version=APP_VERSION)
+agent_orchestrator = AgentOrchestrator(default_model=settings.DEFAULT_MODEL)
 
 
 @app.get("/")
@@ -66,6 +69,15 @@ def health_check():
 @app.get("/system/info", response_model=SystemInfoResponse)
 def system_info():
     return system_diagnostics.get_system_info()
+
+
+@app.post("/agent/plan", response_model=AgentPlanResponse)
+def agent_plan(request: AgentPlanRequest):
+    return agent_orchestrator.plan(
+        message=request.message,
+        cwd=request.cwd,
+        model=request.model,
+    )
 
 
 @app.post("/chat", response_model=ChatResponse)
