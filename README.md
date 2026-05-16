@@ -2,7 +2,7 @@
 
 Hex.ai is a local-first personal AI assistant project.
 
-The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, executes safe planned actions, executes approved risky actions only after explicit confirmation, and records command activity through audit logs.
+The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, executes safe planned actions, executes approved risky actions only after explicit confirmation, records command activity through audit logs, and records agent execution decisions through trace logs.
 
 Hex.ai is not just a chatbot. It is being developed as a private personal AI assistant backend that can evolve into a Jarvis-like local AI system.
 
@@ -10,9 +10,9 @@ Hex.ai is not just a chatbot. It is being developed as a private personal AI ass
 
 ## Current Version
 
-Current version: `v1.4.0`
+Current version: `v1.5.0`
 
-Current status: local backend MVP with agent planning, safe agent execution, confirmed command execution, and command audit logging.
+Current status: local backend MVP with agent planning, safe agent execution, confirmed command execution, command audit logging, and agent execution tracing.
 
 ---
 
@@ -74,6 +74,16 @@ Hex.ai currently includes:
 - Command stdout/stderr preview tracking
 - Command risk-level tracking
 - Command confirmation tracking
+- Agent execution trace logging
+- SQLite-based agent trace storage
+- Trace ID returned from agent execution responses
+- Trace records for `/agent/execute`
+- Trace records for `/agent/execute-confirmed`
+- Agent trace history endpoint
+- Agent planning decision tracking
+- Agent selected endpoint tracking
+- Agent selected parameter tracking
+- Agent execution result summary tracking
 
 ---
 
@@ -96,10 +106,11 @@ Hex.ai is designed to assist with:
 - Safe agent execution
 - Confirmed risky command execution
 - Command audit review
+- Agent execution trace review
 - Local database usage in future versions
 - Controlled automation in future versions
 
-The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, execute approved higher-risk tasks only after explicit confirmation, record its command activity, and later support voice interaction.
+The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, execute approved higher-risk tasks only after explicit confirmation, record its command activity, record its agent decisions, and later support voice interaction.
 
 ---
 
@@ -118,6 +129,7 @@ Hex.ai follows these principles:
 - Explicit confirmation before risky actions
 - System-level destructive action blocking
 - Auditability for tool-based actions
+- Traceability for agent decisions
 - No accidental upload of private data
 - Small working modules before complex autonomy
 - Versioned development
@@ -208,7 +220,8 @@ Hex.ai/
 │   │   │
 │   │   ├── audit/
 │   │   │   ├── __init__.py
-│   │   │   └── audit_store.py
+│   │   │   ├── audit_store.py
+│   │   │   └── trace_store.py
 │   │   │
 │   │   ├── llm/
 │   │   │   └── ollama_client.py
@@ -232,7 +245,8 @@ Hex.ai/
 │   │   │   ├── tool.py
 │   │   │   ├── codebase.py
 │   │   │   ├── command.py
-│   │   │   └── system.py
+│   │   │   ├── system.py
+│   │   │   └── trace.py
 │   │   │
 │   │   ├── security/
 │   │   │   └── command_policy.py
@@ -278,7 +292,7 @@ FastAPI Backend
         ↓
 Agent Planner + Agent Executor + Core API Layer
         ↓
-LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics + Audit Layer
+LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics + Audit Layer + Trace Layer
         ↓
 Ollama + SQLite + Local Files + Controlled Commands
 ```
@@ -312,7 +326,9 @@ Risky command is stopped before execution
     ↓
 Command event is written to audit log when command-related
     ↓
-Result is returned in a unified response object
+Agent execution decision is written to trace log
+    ↓
+Trace ID is returned
 ```
 
 Current confirmed command execution flow:
@@ -335,6 +351,10 @@ If allowed and correctly confirmed, command is executed
 If system-high-risk, command remains blocked
     ↓
 Command event is written to audit log
+    ↓
+Agent execution decision is written to trace log
+    ↓
+Trace ID is returned
 ```
 
 Current audit flow:
@@ -348,6 +368,18 @@ SQLite command_audit_logs table
     ↓
 GET /tools/commands/history
 GET /agent/command-history
+```
+
+Current trace flow:
+
+```text
+Agent execution or confirmed agent execution
+    ↓
+AgentTraceStore
+    ↓
+SQLite agent_execution_traces table
+    ↓
+GET /agent/traces
 ```
 
 ---
@@ -365,7 +397,7 @@ backend/app/main.py
 Responsibilities:
 
 - Exposes API endpoints
-- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, agent executor, audit store, and LLM layer
+- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, agent executor, audit store, trace store, and LLM layer
 - Provides Swagger documentation
 - Returns structured JSON responses
 
@@ -440,7 +472,8 @@ Responsibilities:
 - Stops when a command requires confirmation
 - Executes confirmed commands through a dedicated confirmation flow
 - Creates audit records for command-related activity
-- Returns a unified execution response
+- Creates trace records for agent-level execution decisions
+- Returns a unified execution response with `trace_id`
 
 Current execution endpoints:
 
@@ -448,6 +481,7 @@ Current execution endpoints:
 POST /agent/execute
 POST /agent/execute-confirmed
 GET  /agent/command-history
+GET  /agent/traces
 ```
 
 Important behavior:
@@ -458,6 +492,7 @@ Commands requiring confirmation are not auto-executed by /agent/execute.
 Commands requiring confirmation can be executed by /agent/execute-confirmed only with the correct phrase.
 System-high-risk commands remain blocked even when confirmation is provided.
 Command-related activity is recorded in SQLite audit logs.
+Agent execution decisions are recorded in SQLite trace logs.
 ```
 
 ---
@@ -518,7 +553,60 @@ GET /agent/command-history
 
 ---
 
-### 5. LLM Layer
+### 5. Trace Layer
+
+Location:
+
+```text
+backend/app/audit/
+```
+
+Main file:
+
+```text
+trace_store.py
+```
+
+Storage:
+
+```text
+SQLite
+```
+
+Main table:
+
+```text
+agent_execution_traces
+```
+
+Responsibilities:
+
+- Stores agent execution traces
+- Stores confirmed agent execution traces
+- Stores user message
+- Stores working directory
+- Stores selected model
+- Stores detected intent
+- Stores planner confidence
+- Stores selected HTTP method
+- Stores selected endpoint
+- Stores selected parameters
+- Stores execution status
+- Stores confirmation requirement status
+- Stores summarized result data
+- Stores final reason
+- Stores warnings
+- Returns trace history through API
+
+Current trace endpoint:
+
+```text
+GET /agent/traces
+```
+
+---
+
+### 6. LLM Layer
 
 Location:
 
@@ -542,7 +630,7 @@ Responsibilities:
 
 ---
 
-### 6. Prompt Layer
+### 7. Prompt Layer
 
 Location:
 
@@ -565,7 +653,7 @@ Responsibilities:
 
 ---
 
-### 7. Memory Layer
+### 8. Memory Layer
 
 Location:
 
@@ -610,7 +698,7 @@ Send prompt to Ollama
 
 ---
 
-### 8. RAG Layer
+### 9. RAG Layer
 
 Location:
 
@@ -660,7 +748,7 @@ Send prompt to Ollama
 
 ---
 
-### 9. Tool Layer
+### 10. Tool Layer
 
 Location:
 
@@ -690,7 +778,7 @@ Current capabilities:
 
 ---
 
-### 10. Command Permission Engine
+### 11. Command Permission Engine
 
 Main file:
 
@@ -705,7 +793,8 @@ Current command system supports:
 - Risk classification
 - Confirmation phrase requirement
 - Read-only command auto-approval
-- Write command confirmation
+- Development-safe command handling
+- Write-project command confirmation
 - Network command confirmation
 - Script execution confirmation
 - Destructive command confirmation
@@ -737,7 +826,7 @@ I_CONFIRM_HEXAI_FULL_ACCESS
 
 ---
 
-### 11. System Diagnostics
+### 12. System Diagnostics
 
 Location:
 
@@ -767,7 +856,7 @@ Current capabilities:
 
 ---
 
-### 12. Security Layer
+### 13. Security Layer
 
 Location:
 
@@ -809,6 +898,7 @@ POST /agent/plan
 POST /agent/execute
 POST /agent/execute-confirmed
 GET  /agent/command-history
+GET  /agent/traces
 ```
 
 ### System
@@ -872,6 +962,7 @@ __pycache__
 .ruff_cache
 data/memory
 data/vector_db
+backend/data
 ```
 
 Reasons:
@@ -879,8 +970,9 @@ Reasons:
 - `.env` may contain secrets, API keys, tokens, or local configuration
 - `.git` contains repository internals
 - `.venv` contains installed packages and large dependency files
-- `data/memory` contains assistant memory and audit data
+- `data/memory` contains assistant memory, command audit logs, and agent traces
 - `data/vector_db` will contain embedded private documents in future versions
+- `backend/data` may be generated when the backend is launched from the backend directory
 
 ---
 
@@ -926,6 +1018,7 @@ credentials
 private logs
 local database files
 audit database files
+trace database files
 ```
 
 The `.gitignore` file is configured to prevent private local data from being uploaded accidentally.
@@ -1099,7 +1192,7 @@ Expected response includes:
 {
   "app_name": "Hex.ai",
   "app_env": "development",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "default_model": "qwen2.5-coder:14b",
   "embedding_model": "nomic-embed-text"
 }
@@ -1200,6 +1293,7 @@ Expected result:
 
 ```json
 {
+  "trace_id": 1,
   "intent": "SYSTEM_INFO",
   "executed": true,
   "requires_confirmation": false
@@ -1221,6 +1315,7 @@ Expected result:
 
 ```json
 {
+  "trace_id": 2,
   "intent": "COMMAND_PLAN",
   "executed": true,
   "requires_confirmation": false
@@ -1350,6 +1445,7 @@ Expected result:
 
 ```json
 {
+  "trace_id": 3,
   "intent": "COMMAND_PLAN",
   "executed": true,
   "requires_confirmation": false
@@ -1423,6 +1519,47 @@ Expected response:
       "risk_level": "MIXED_OR_CHAINED",
       "executed": true,
       "confirmation_provided": true
+    }
+  ]
+}
+```
+
+---
+
+### Agent Traces
+
+Endpoint:
+
+```text
+GET /agent/traces?limit=10
+```
+
+Expected response:
+
+```json
+{
+  "limit": 10,
+  "count": 3,
+  "records": [
+    {
+      "id": 3,
+      "source": "agent",
+      "trace_type": "execute_confirmed",
+      "message": "command: echo Hex.ai trace test > data\\documents\\trace_test.txt",
+      "intent": "COMMAND_PLAN",
+      "confidence": 0.9,
+      "planned_method": "POST",
+      "planned_endpoint": "/tools/commands/plan",
+      "executed": true,
+      "requires_confirmation": false,
+      "result_summary": {
+        "type": "dict",
+        "keys": [
+          "command_plan",
+          "command_result",
+          "audit_record"
+        ]
+      }
     }
   ]
 }
@@ -1977,21 +2114,34 @@ Implemented:
 
 ---
 
-## Planned Roadmap
-
 ### v1.5 — Agent Execution Trace
 
-Planned:
+Status: Done
 
-- Add multi-step agent trace records
-- Store agent planning decisions
-- Store selected endpoint and parameters
-- Store execution result summaries
-- Add trace IDs to agent responses
-- Add trace history endpoint
-- Prepare the system for multi-step agent loops
+Implemented:
+
+- Added agent execution trace storage
+- Added SQLite `agent_execution_traces` table
+- Added trace records for `/agent/execute`
+- Added trace records for `/agent/execute-confirmed`
+- Added `trace_id` field to agent execution responses
+- Added `/agent/traces`
+- Added trace history listing
+- Added message tracking
+- Added intent tracking
+- Added confidence tracking
+- Added selected method tracking
+- Added selected endpoint tracking
+- Added selected parameters tracking
+- Added execution status tracking
+- Added confirmation requirement tracking
+- Added result summary tracking
+- Added warning tracking
+- Prepared the system for future multi-step agent loops
 
 ---
+
+## Planned Roadmap
 
 ### v1.6 — Better RAG and Vector Database
 
@@ -2003,6 +2153,8 @@ Planned:
 - Add document refresh logic
 - Add Chroma, Qdrant, or FAISS support
 - Improve document metadata tracking
+- Add stronger document citation metadata
+- Add better duplicate document handling
 
 ---
 
@@ -2055,6 +2207,7 @@ Planned:
 - Command approval panel
 - Project analysis panel
 - Audit log viewer
+- Trace log viewer
 
 ---
 
@@ -2096,12 +2249,12 @@ Hex.ai is still an early local assistant backend.
 
 Current limitations:
 
-- No autonomous agent loop yet
-- `/agent/execute` executes only safe internal flows
+- No autonomous multi-step agent loop yet
+- `/agent/execute` executes only safe internal flows and safe commands
 - Commands requiring confirmation are not executed automatically by `/agent/execute`
 - `/agent/execute-confirmed` currently supports confirmed command execution only
 - Audit logging currently focuses on command activity
-- No full multi-step agent trace yet
+- Agent trace logging currently focuses on single-step agent execution
 - No voice system yet
 - No UI except Swagger
 - No authentication yet
@@ -2110,7 +2263,7 @@ Current limitations:
 - Semantic search currently uses SQLite-stored embeddings instead of a dedicated vector database
 - RAG ranking is simple and will need improvement
 - System-level destructive commands are blocked from API execution
-- Confirmed raw command execution still needs stronger logging and audit controls
+- Confirmed raw command execution still needs stronger policy controls before broader autonomy
 
 ---
 
