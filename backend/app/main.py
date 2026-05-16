@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Query
 
 from app.agent.executor import AgentExecutor
 from app.agent.orchestrator import AgentOrchestrator
+from app.audit.audit_store import CommandAuditStore
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
@@ -13,6 +14,7 @@ from app.schemas.agent import (
     AgentPlanRequest,
     AgentPlanResponse,
 )
+from app.schemas.audit import CommandAuditListResponse
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.codebase import (
     CodebaseAnalyzeRequest,
@@ -36,7 +38,7 @@ from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 
 
 app = FastAPI(
@@ -52,6 +54,7 @@ document_store = DocumentStore()
 file_tools = FileTools()
 codebase_tools = CodebaseTools()
 command_tools = CommandTools()
+command_audit_store = CommandAuditStore()
 system_diagnostics = SystemDiagnostics(version=APP_VERSION)
 agent_orchestrator = AgentOrchestrator(default_model=settings.DEFAULT_MODEL)
 agent_executor = AgentExecutor(
@@ -62,6 +65,7 @@ agent_executor = AgentExecutor(
     codebase_tools=codebase_tools,
     command_tools=command_tools,
     system_diagnostics=system_diagnostics,
+    command_audit_store=command_audit_store,
 )
 
 
@@ -140,6 +144,23 @@ def agent_execute_confirmed(request: AgentConfirmedExecuteRequest):
 
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.get("/agent/command-history", response_model=CommandAuditListResponse)
+def agent_command_history(
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+    )
+):
+    records = command_audit_store.list_command_events(limit=limit)
+
+    return {
+        "limit": limit,
+        "count": len(records),
+        "records": records,
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -371,13 +392,44 @@ def list_allowed_commands():
     }
 
 
+@app.get("/tools/commands/history", response_model=CommandAuditListResponse)
+def list_command_history(
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+    )
+):
+    records = command_audit_store.list_command_events(limit=limit)
+
+    return {
+        "limit": limit,
+        "count": len(records),
+        "records": records,
+    }
+
+
 @app.post("/tools/commands/run", response_model=CommandRunResponse)
 def run_command(request: CommandRunRequest):
     try:
-        return command_tools.run_command(
+        result = command_tools.run_command(
             command_key=request.command_key,
             cwd=request.cwd,
         )
+
+        command_audit_store.record_command_event(
+            source="tools",
+            action="run",
+            command_key=request.command_key,
+            cwd=request.cwd,
+            command_result=result,
+            executed=True,
+            reason="Allowed command executed by tool endpoint.",
+            warnings=[],
+            confirmation_provided=False,
+        )
+
+        return result
 
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -392,10 +444,24 @@ def run_command(request: CommandRunRequest):
 @app.post("/tools/commands/plan", response_model=CommandPlanResponse)
 def plan_command(request: CommandPlanRequest):
     try:
-        return command_tools.plan_command(
+        result = command_tools.plan_command(
             command=request.command,
             cwd=request.cwd,
         )
+
+        command_audit_store.record_command_event(
+            source="tools",
+            action="plan",
+            command_text=request.command,
+            cwd=request.cwd,
+            command_plan=result,
+            executed=False,
+            reason=result.get("reason"),
+            warnings=result.get("warnings", []),
+            confirmation_provided=False,
+        )
+
+        return result
 
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -410,11 +476,31 @@ def plan_command(request: CommandPlanRequest):
 @app.post("/tools/commands/run-confirmed", response_model=CommandRunResponse)
 def run_confirmed_command(request: CommandConfirmedRunRequest):
     try:
-        return command_tools.run_confirmed_command(
+        command_plan = command_tools.plan_command(
+            command=request.command,
+            cwd=request.cwd,
+        )
+
+        result = command_tools.run_confirmed_command(
             command=request.command,
             cwd=request.cwd,
             confirmation_phrase=request.confirmation_phrase,
         )
+
+        command_audit_store.record_command_event(
+            source="tools",
+            action="run_confirmed",
+            command_text=request.command,
+            cwd=request.cwd,
+            command_plan=command_plan,
+            command_result=result,
+            executed=True,
+            reason="Confirmed raw command executed by tool endpoint.",
+            warnings=command_plan.get("warnings", []),
+            confirmation_provided=request.confirmation_phrase is not None,
+        )
+
+        return result
 
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc))

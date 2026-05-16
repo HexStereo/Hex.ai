@@ -3,6 +3,7 @@ from typing import Any
 from fastapi.encoders import jsonable_encoder
 
 from app.agent.orchestrator import AgentOrchestrator
+from app.audit.audit_store import CommandAuditStore
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
@@ -22,6 +23,7 @@ class AgentExecutor:
         codebase_tools: CodebaseTools,
         command_tools: CommandTools,
         system_diagnostics: SystemDiagnostics,
+        command_audit_store: CommandAuditStore,
     ):
         self.orchestrator = orchestrator
         self.ollama_client = ollama_client
@@ -30,6 +32,7 @@ class AgentExecutor:
         self.codebase_tools = codebase_tools
         self.command_tools = command_tools
         self.system_diagnostics = system_diagnostics
+        self.command_audit_store = command_audit_store
 
     def _safe_result(self, value: Any) -> Any:
         return jsonable_encoder(value)
@@ -51,31 +54,70 @@ class AgentExecutor:
         )
 
         if not command_plan["allowed_to_run"]:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason="Command is not allowed to run through the Hex.ai API.",
+                warnings=command_plan["warnings"],
+                confirmation_provided=False,
+            )
+
             return {
                 "executed": False,
                 "requires_confirmation": command_plan["requires_confirmation"],
                 "command_plan": command_plan,
                 "result": None,
+                "audit_record": audit_record,
                 "reason": "Command is not allowed to run through the Hex.ai API.",
                 "warnings": command_plan["warnings"],
             }
 
         if command_plan["requires_confirmation"]:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason="Command requires explicit confirmation before execution.",
+                warnings=command_plan["warnings"],
+                confirmation_provided=False,
+            )
+
             return {
                 "executed": False,
                 "requires_confirmation": True,
                 "command_plan": command_plan,
                 "result": None,
+                "audit_record": audit_record,
                 "reason": "Command requires explicit confirmation before execution.",
                 "warnings": command_plan["warnings"],
             }
 
         if not auto_execute_safe_commands:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason="Command is safe, but automatic command execution is disabled for this request.",
+                warnings=command_plan["warnings"],
+                confirmation_provided=False,
+            )
+
             return {
                 "executed": False,
                 "requires_confirmation": False,
                 "command_plan": command_plan,
                 "result": None,
+                "audit_record": audit_record,
                 "reason": "Command is safe, but automatic command execution is disabled for this request.",
                 "warnings": command_plan["warnings"],
             }
@@ -86,11 +128,25 @@ class AgentExecutor:
             confirmation_phrase=None,
         )
 
+        audit_record = self.command_audit_store.record_command_event(
+            source="agent",
+            action="execute",
+            command_text=command,
+            cwd=cwd,
+            command_plan=command_plan,
+            command_result=command_result,
+            executed=True,
+            reason="Safe command executed automatically.",
+            warnings=command_plan["warnings"],
+            confirmation_provided=False,
+        )
+
         return {
             "executed": True,
             "requires_confirmation": False,
             "command_plan": command_plan,
             "result": command_result,
+            "audit_record": audit_record,
             "reason": "Safe command executed automatically.",
             "warnings": command_plan["warnings"],
         }
@@ -109,25 +165,79 @@ class AgentExecutor:
         )
 
         if not command_plan["allowed_to_run"]:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute_confirmed",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason="Command is not allowed to run through the Hex.ai API.",
+                warnings=command_plan["warnings"],
+                confirmation_provided=confirmation_phrase is not None,
+            )
+
             return {
                 "executed": False,
                 "requires_confirmation": command_plan["requires_confirmation"],
                 "command_plan": command_plan,
                 "result": None,
+                "audit_record": audit_record,
                 "reason": "Command is not allowed to run through the Hex.ai API.",
                 "warnings": command_plan["warnings"],
             }
 
         if command_plan["requires_confirmation"] and not confirmation_phrase:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute_confirmed",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason=(
+                    "Command requires explicit confirmation. "
+                    f"Required phrase: {command_plan.get('confirmation_phrase')}"
+                ),
+                warnings=command_plan["warnings"],
+                confirmation_provided=False,
+            )
+
             return {
                 "executed": False,
                 "requires_confirmation": True,
                 "command_plan": command_plan,
                 "result": None,
+                "audit_record": audit_record,
                 "reason": (
                     "Command requires explicit confirmation. "
                     f"Required phrase: {command_plan.get('confirmation_phrase')}"
                 ),
+                "warnings": command_plan["warnings"],
+            }
+
+        required_phrase = command_plan.get("confirmation_phrase")
+
+        if command_plan["requires_confirmation"] and confirmation_phrase != required_phrase:
+            audit_record = self.command_audit_store.record_command_event(
+                source="agent",
+                action="execute_confirmed",
+                command_text=command,
+                cwd=cwd,
+                command_plan=command_plan,
+                executed=False,
+                reason="Invalid confirmation phrase.",
+                warnings=command_plan["warnings"],
+                confirmation_provided=True,
+            )
+
+            return {
+                "executed": False,
+                "requires_confirmation": True,
+                "command_plan": command_plan,
+                "result": None,
+                "audit_record": audit_record,
+                "reason": "Invalid confirmation phrase.",
                 "warnings": command_plan["warnings"],
             }
 
@@ -137,11 +247,25 @@ class AgentExecutor:
             confirmation_phrase=confirmation_phrase,
         )
 
+        audit_record = self.command_audit_store.record_command_event(
+            source="agent",
+            action="execute_confirmed",
+            command_text=command,
+            cwd=cwd,
+            command_plan=command_plan,
+            command_result=command_result,
+            executed=True,
+            reason="Confirmed command executed.",
+            warnings=command_plan["warnings"],
+            confirmation_provided=confirmation_phrase is not None,
+        )
+
         return {
             "executed": True,
             "requires_confirmation": False,
             "command_plan": command_plan,
             "result": command_result,
+            "audit_record": audit_record,
             "reason": "Confirmed command executed.",
             "warnings": command_plan["warnings"],
         }
@@ -300,6 +424,7 @@ class AgentExecutor:
             result = {
                 "command_plan": command_execution["command_plan"],
                 "command_result": command_execution["result"],
+                "audit_record": command_execution["audit_record"],
             }
             reason = command_execution["reason"]
             warnings.extend(command_execution["warnings"])
@@ -398,6 +523,7 @@ class AgentExecutor:
                 {
                     "command_plan": command_execution["command_plan"],
                     "command_result": command_execution["result"],
+                    "audit_record": command_execution["audit_record"],
                 }
             ),
             "reason": command_execution["reason"],
