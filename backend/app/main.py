@@ -7,6 +7,7 @@ from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
 from app.rag.document_store import DocumentStore
 from app.schemas.agent import (
+    AgentConfirmedExecuteRequest,
     AgentExecuteRequest,
     AgentExecuteResponse,
     AgentPlanRequest,
@@ -35,7 +36,7 @@ from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 
 
 app = FastAPI(
@@ -103,6 +104,29 @@ def agent_execute(request: AgentExecuteRequest):
             cwd=request.cwd,
             model=request.model,
             auto_execute_safe_commands=request.auto_execute_safe_commands,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+
+
+@app.post("/agent/execute-confirmed", response_model=AgentExecuteResponse)
+def agent_execute_confirmed(request: AgentConfirmedExecuteRequest):
+    try:
+        return agent_executor.execute_confirmed(
+            message=request.message,
+            cwd=request.cwd,
+            model=request.model,
+            confirmation_phrase=request.confirmation_phrase,
         )
 
     except PermissionError as exc:

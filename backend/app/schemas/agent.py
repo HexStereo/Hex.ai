@@ -49,6 +49,25 @@ class AgentExecuteRequest(BaseModel):
     )
 
 
+class AgentConfirmedExecuteRequest(BaseModel):
+    message: str = Field(
+        ...,
+        description="User message containing or describing a command to execute with explicit confirmation.",
+    )
+    cwd: str = Field(
+        default=".",
+        description="Project-relative working directory for confirmed command execution.",
+    )
+    model: str | None = Field(
+        default=None,
+        description="Optional model name used only during planning.",
+    )
+    confirmation_phrase: str | None = Field(
+        default=None,
+        description="Required confirmation phrase for commands that need explicit approval.",
+    )
+
+
 class AgentExecuteResponse(BaseModel):
     message: str
     intent: str

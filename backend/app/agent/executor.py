@@ -95,6 +95,57 @@ class AgentExecutor:
             "warnings": command_plan["warnings"],
         }
 
+    def _execute_confirmed_command(
+        self,
+        parameters: dict,
+        confirmation_phrase: str | None,
+    ) -> dict:
+        command = parameters.get("command", "")
+        cwd = parameters.get("cwd", ".")
+
+        command_plan = self.command_tools.plan_command(
+            command=command,
+            cwd=cwd,
+        )
+
+        if not command_plan["allowed_to_run"]:
+            return {
+                "executed": False,
+                "requires_confirmation": command_plan["requires_confirmation"],
+                "command_plan": command_plan,
+                "result": None,
+                "reason": "Command is not allowed to run through the Hex.ai API.",
+                "warnings": command_plan["warnings"],
+            }
+
+        if command_plan["requires_confirmation"] and not confirmation_phrase:
+            return {
+                "executed": False,
+                "requires_confirmation": True,
+                "command_plan": command_plan,
+                "result": None,
+                "reason": (
+                    "Command requires explicit confirmation. "
+                    f"Required phrase: {command_plan.get('confirmation_phrase')}"
+                ),
+                "warnings": command_plan["warnings"],
+            }
+
+        command_result = self.command_tools.run_confirmed_command(
+            command=command,
+            cwd=cwd,
+            confirmation_phrase=confirmation_phrase,
+        )
+
+        return {
+            "executed": True,
+            "requires_confirmation": False,
+            "command_plan": command_plan,
+            "result": command_result,
+            "reason": "Confirmed command executed.",
+            "warnings": command_plan["warnings"],
+        }
+
     def _execute_codebase_analysis(self, parameters: dict) -> dict:
         context = self.codebase_tools.collect_code_context(
             input_path=parameters.get("path", "."),
@@ -290,5 +341,65 @@ class AgentExecutor:
             "requires_confirmation": requires_confirmation,
             "result": self._safe_result(result),
             "reason": reason,
+            "warnings": warnings,
+        }
+
+    def execute_confirmed(
+        self,
+        message: str,
+        cwd: str = ".",
+        model: str | None = None,
+        confirmation_phrase: str | None = None,
+    ) -> dict:
+        plan = self.orchestrator.plan(
+            message=message,
+            cwd=cwd,
+            model=model,
+        )
+
+        intent = plan["intent"]
+        parameters = plan["parameters"]
+        warnings = list(plan["warnings"])
+
+        if intent != "COMMAND_PLAN":
+            warnings.append("Confirmed execution is only available for command planning intents.")
+
+            return {
+                "message": plan["message"],
+                "intent": intent,
+                "confidence": plan["confidence"],
+                "planned_method": plan["method"],
+                "planned_endpoint": plan["endpoint"],
+                "planned_parameters": parameters,
+                "executed": False,
+                "requires_confirmation": False,
+                "result": None,
+                "reason": "This request was not routed as a command, so confirmed execution was not performed.",
+                "warnings": warnings,
+            }
+
+        command_execution = self._execute_confirmed_command(
+            parameters=parameters,
+            confirmation_phrase=confirmation_phrase,
+        )
+
+        warnings.extend(command_execution["warnings"])
+
+        return {
+            "message": plan["message"],
+            "intent": intent,
+            "confidence": plan["confidence"],
+            "planned_method": plan["method"],
+            "planned_endpoint": plan["endpoint"],
+            "planned_parameters": parameters,
+            "executed": command_execution["executed"],
+            "requires_confirmation": command_execution["requires_confirmation"],
+            "result": self._safe_result(
+                {
+                    "command_plan": command_execution["command_plan"],
+                    "command_result": command_execution["result"],
+                }
+            ),
+            "reason": command_execution["reason"],
             "warnings": warnings,
         }
