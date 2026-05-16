@@ -1,11 +1,17 @@
 from fastapi import FastAPI, HTTPException, Query
 
+from app.agent.executor import AgentExecutor
 from app.agent.orchestrator import AgentOrchestrator
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
 from app.rag.document_store import DocumentStore
-from app.schemas.agent import AgentPlanRequest, AgentPlanResponse
+from app.schemas.agent import (
+    AgentExecuteRequest,
+    AgentExecuteResponse,
+    AgentPlanRequest,
+    AgentPlanResponse,
+)
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.codebase import (
     CodebaseAnalyzeRequest,
@@ -29,7 +35,7 @@ from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 
 app = FastAPI(
@@ -47,6 +53,15 @@ codebase_tools = CodebaseTools()
 command_tools = CommandTools()
 system_diagnostics = SystemDiagnostics(version=APP_VERSION)
 agent_orchestrator = AgentOrchestrator(default_model=settings.DEFAULT_MODEL)
+agent_executor = AgentExecutor(
+    orchestrator=agent_orchestrator,
+    ollama_client=ollama_client,
+    memory_store=memory_store,
+    document_store=document_store,
+    codebase_tools=codebase_tools,
+    command_tools=command_tools,
+    system_diagnostics=system_diagnostics,
+)
 
 
 @app.get("/")
@@ -78,6 +93,29 @@ def agent_plan(request: AgentPlanRequest):
         cwd=request.cwd,
         model=request.model,
     )
+
+
+@app.post("/agent/execute", response_model=AgentExecuteResponse)
+def agent_execute(request: AgentExecuteRequest):
+    try:
+        return agent_executor.execute(
+            message=request.message,
+            cwd=request.cwd,
+            model=request.model,
+            auto_execute_safe_commands=request.auto_execute_safe_commands,
+        )
+
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    except NotADirectoryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
 
 
 @app.post("/chat", response_model=ChatResponse)
