@@ -2,7 +2,7 @@
 
 Hex.ai is a local-first personal AI assistant project.
 
-The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, and routes user requests to the correct internal capability.
+The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, and executes safe planned actions.
 
 Hex.ai is not just a chatbot. It is being developed as a private personal AI assistant backend that can evolve into a Jarvis-like local AI system.
 
@@ -10,9 +10,9 @@ Hex.ai is not just a chatbot. It is being developed as a private personal AI ass
 
 ## Current Version
 
-Current version: `v1.1.0`
+Current version: `v1.2.0`
 
-Current status: local backend MVP with agent planning.
+Current status: local backend MVP with agent planning and safe agent execution.
 
 ---
 
@@ -53,6 +53,13 @@ Hex.ai currently includes:
 - Path status checks for memory, documents, and vector database folders
 - Agent planning endpoint
 - Intent routing for system, command, codebase, document, memory, and chat requests
+- Agent execution endpoint
+- Safe execution of routed system info requests
+- Safe execution of read-only commands
+- Safe execution of document search
+- Safe execution of memory search
+- Safe execution of chat
+- Risk-aware blocking for commands that require confirmation
 
 ---
 
@@ -72,10 +79,11 @@ Hex.ai is designed to assist with:
 - Local command execution with permission control
 - System status inspection
 - Intent routing
+- Safe agent execution
 - Local database usage in future versions
 - Controlled automation in future versions
 
-The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, and later support voice interaction.
+The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, and later support voice interaction.
 
 ---
 
@@ -90,6 +98,7 @@ Hex.ai follows these principles:
 - Controlled command execution
 - Permission-based risk handling
 - Clear intent routing
+- Safe execution before autonomy
 - No accidental upload of private data
 - Small working modules before complex autonomy
 - Versioned development
@@ -175,7 +184,8 @@ Hex.ai/
 │   ├── app/
 │   │   ├── agent/
 │   │   │   ├── __init__.py
-│   │   │   └── orchestrator.py
+│   │   │   ├── orchestrator.py
+│   │   │   └── executor.py
 │   │   │
 │   │   ├── llm/
 │   │   │   └── ollama_client.py
@@ -242,14 +252,14 @@ User / API Client / Swagger
         ↓
 FastAPI Backend
         ↓
-Agent Planner + Core API Layer
+Agent Planner + Agent Executor + Core API Layer
         ↓
 LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics
         ↓
 Ollama + SQLite + Local Files + Controlled Commands
 ```
 
-Current request planning flow:
+Current planning flow:
 
 ```text
 User message
@@ -259,6 +269,22 @@ POST /agent/plan
 AgentOrchestrator classifies intent
     ↓
 Returns target endpoint, method, parameters, reason, and warnings
+```
+
+Current execution flow:
+
+```text
+User message
+    ↓
+POST /agent/execute
+    ↓
+AgentExecutor calls AgentOrchestrator
+    ↓
+Intent is detected
+    ↓
+Safe internal capability is executed
+    ↓
+Result is returned in a unified response object
 ```
 
 ---
@@ -276,7 +302,7 @@ backend/app/main.py
 Responsibilities:
 
 - Exposes API endpoints
-- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, and LLM layer
+- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, agent executor, and LLM layer
 - Provides Swagger documentation
 - Returns structured JSON responses
 
@@ -317,7 +343,7 @@ CHAT
 INVALID
 ```
 
-Current agent endpoint:
+Current planning endpoint:
 
 ```text
 POST /agent/plan
@@ -325,7 +351,49 @@ POST /agent/plan
 
 ---
 
-### 3. LLM Layer
+### 3. Agent Execution Layer
+
+Location:
+
+```text
+backend/app/agent/
+```
+
+Main file:
+
+```text
+executor.py
+```
+
+Responsibilities:
+
+- Calls the planner
+- Executes safe planned routes
+- Executes system diagnostics
+- Executes read-only command plans when allowed
+- Executes document search
+- Executes memory search
+- Executes chat
+- Stops when a command requires confirmation
+- Returns a unified execution response
+
+Current execution endpoint:
+
+```text
+POST /agent/execute
+```
+
+Important behavior:
+
+```text
+Safe read-only commands can be auto-executed.
+Commands requiring confirmation are not auto-executed.
+System high-risk commands remain blocked.
+```
+
+---
+
+### 4. LLM Layer
 
 Location:
 
@@ -349,7 +417,7 @@ Responsibilities:
 
 ---
 
-### 4. Prompt Layer
+### 5. Prompt Layer
 
 Location:
 
@@ -372,7 +440,7 @@ Responsibilities:
 
 ---
 
-### 5. Memory Layer
+### 6. Memory Layer
 
 Location:
 
@@ -417,7 +485,7 @@ Send prompt to Ollama
 
 ---
 
-### 6. RAG Layer
+### 7. RAG Layer
 
 Location:
 
@@ -467,7 +535,7 @@ Send prompt to Ollama
 
 ---
 
-### 7. Tool Layer
+### 8. Tool Layer
 
 Location:
 
@@ -497,7 +565,7 @@ Current capabilities:
 
 ---
 
-### 8. Command Permission Engine
+### 9. Command Permission Engine
 
 Main file:
 
@@ -544,7 +612,7 @@ I_CONFIRM_HEXAI_FULL_ACCESS
 
 ---
 
-### 9. System Diagnostics
+### 10. System Diagnostics
 
 Location:
 
@@ -574,7 +642,7 @@ Current capabilities:
 
 ---
 
-### 10. Security Layer
+### 11. Security Layer
 
 Location:
 
@@ -613,6 +681,7 @@ POST /chat
 
 ```text
 POST /agent/plan
+POST /agent/execute
 ```
 
 ### System
@@ -670,7 +739,7 @@ Hex.ai blocks access to the following paths by default:
 .git
 .venv
 __pycache__
-.pytest_cache__
+.pytest_cache
 .mypy_cache
 .ruff_cache
 data/memory
@@ -900,7 +969,7 @@ Expected response includes:
 {
   "app_name": "Hex.ai",
   "app_env": "development",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "default_model": "qwen2.5-coder:14b",
   "embedding_model": "nomic-embed-text"
 }
@@ -956,46 +1025,6 @@ Expected routing:
 }
 ```
 
-Codebase analysis example:
-
-```json
-{
-  "message": "backend/app kod tabanını analiz et",
-  "cwd": ".",
-  "model": "qwen2.5-coder:14b"
-}
-```
-
-Expected routing:
-
-```json
-{
-  "intent": "CODEBASE_ANALYSIS",
-  "method": "POST",
-  "endpoint": "/tools/codebase/analyze"
-}
-```
-
-Document search example:
-
-```json
-{
-  "message": "dokümanlarda Hex.ai güvenlik kurallarını ara",
-  "cwd": ".",
-  "model": "qwen2.5-coder:14b"
-}
-```
-
-Expected routing:
-
-```json
-{
-  "intent": "DOCUMENT_SEARCH",
-  "method": "GET",
-  "endpoint": "/documents/search"
-}
-```
-
 Normal chat example:
 
 ```json
@@ -1013,6 +1042,119 @@ Expected routing:
   "intent": "CHAT",
   "method": "POST",
   "endpoint": "/chat"
+}
+```
+
+---
+
+### Agent Execute
+
+Endpoint:
+
+```text
+POST /agent/execute
+```
+
+System info execution example:
+
+```json
+{
+  "message": "sistem durumunu kontrol et",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "auto_execute_safe_commands": true
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "SYSTEM_INFO",
+  "executed": true,
+  "requires_confirmation": false
+}
+```
+
+Safe command execution example:
+
+```json
+{
+  "message": "git status komutunu çalıştır",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "auto_execute_safe_commands": true
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "COMMAND_PLAN",
+  "executed": true,
+  "requires_confirmation": false
+}
+```
+
+Risky command example:
+
+```json
+{
+  "message": "command: echo Hex.ai agent execute test > data\\documents\\agent_execute_test.txt",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "auto_execute_safe_commands": true
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "COMMAND_PLAN",
+  "executed": false,
+  "requires_confirmation": true
+}
+```
+
+Document search execution example:
+
+```json
+{
+  "message": "dokümanlarda Hex.ai güvenlik kurallarını ara",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "auto_execute_safe_commands": true
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "DOCUMENT_SEARCH",
+  "executed": true
+}
+```
+
+Chat execution example:
+
+```json
+{
+  "message": "Hex.ai nedir?",
+  "cwd": ".",
+  "model": "qwen2.5-coder:14b",
+  "auto_execute_safe_commands": true
+}
+```
+
+Expected result:
+
+```json
+{
+  "intent": "CHAT",
+  "executed": true
 }
 ```
 
@@ -1474,22 +1616,40 @@ Implemented:
 
 ---
 
-## Planned Roadmap
-
 ### v1.2 — Agent Execution Layer
 
-Planned:
+Status: Done
 
-- Execute planned tool routes
-- Add `/agent/execute`
-- Call internal tools based on planner output
-- Return unified response objects
-- Add safer execution flow
-- Preserve confirmation requirements for risky commands
+Implemented:
+
+- Added `/agent/execute`
+- Added `AgentExecutor`
+- Added agent execution schemas
+- Added execution for system info
+- Added execution for safe command planning and read-only command execution
+- Added execution for document search
+- Added execution for memory search
+- Added execution for normal chat
+- Added confirmation-aware command stopping
+- Added unified agent execution response format
 
 ---
 
-### v1.3 — Project-Specific Modules
+## Planned Roadmap
+
+### v1.3 — Command Confirmation Execution Flow
+
+Planned:
+
+- Add explicit confirmed agent command execution
+- Add confirmation token or phrase validation at agent level
+- Add audit log for executed commands
+- Add command history storage
+- Add safer execution trace records
+
+---
+
+### v1.4 — Project-Specific Modules
 
 Planned:
 
@@ -1501,7 +1661,7 @@ Planned:
 
 ---
 
-### v1.4 — UI Layer
+### v1.5 — UI Layer
 
 Planned:
 
@@ -1514,7 +1674,7 @@ Planned:
 
 ---
 
-### v1.5 — Voice Layer
+### v1.6 — Voice Layer
 
 Planned:
 
@@ -1549,8 +1709,9 @@ Hex.ai is still an early local assistant backend.
 Current limitations:
 
 - No autonomous agent loop yet
-- No full tool-calling orchestration yet
-- `/agent/plan` only plans routes; it does not execute them yet
+- `/agent/execute` executes only safe internal flows
+- Commands requiring confirmation are not executed automatically
+- No full command audit log yet
 - No voice system yet
 - No UI except Swagger
 - No authentication yet
