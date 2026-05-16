@@ -2,7 +2,7 @@
 
 Hex.ai is a local-first personal AI assistant project.
 
-The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, executes safe planned actions, and executes approved risky actions only after explicit confirmation.
+The goal of Hex.ai is to build a private, modular, extensible AI system that runs on a personal computer, uses local language models, stores user-defined memory, reads local documents, analyzes codebases, performs controlled tool-based actions, checks its runtime environment, routes user requests to the correct internal capability, executes safe planned actions, executes approved risky actions only after explicit confirmation, and records command activity through audit logs.
 
 Hex.ai is not just a chatbot. It is being developed as a private personal AI assistant backend that can evolve into a Jarvis-like local AI system.
 
@@ -10,9 +10,9 @@ Hex.ai is not just a chatbot. It is being developed as a private personal AI ass
 
 ## Current Version
 
-Current version: `v1.3.0`
+Current version: `v1.4.0`
 
-Current status: local backend MVP with agent planning, safe agent execution, and confirmed command execution.
+Current status: local backend MVP with agent planning, safe agent execution, confirmed command execution, and command audit logging.
 
 ---
 
@@ -63,6 +63,17 @@ Hex.ai currently includes:
 - Confirmed agent command execution endpoint
 - Explicit confirmation phrase validation for risky commands
 - System-high-risk command blocking even when confirmation is provided
+- Command audit logging
+- SQLite-based command history storage
+- Audit records for command planning
+- Audit records for safe command execution
+- Audit records for confirmed command execution
+- Audit records for tool-level command endpoints
+- Command history endpoint
+- Agent command history endpoint
+- Command stdout/stderr preview tracking
+- Command risk-level tracking
+- Command confirmation tracking
 
 ---
 
@@ -84,10 +95,11 @@ Hex.ai is designed to assist with:
 - Intent routing
 - Safe agent execution
 - Confirmed risky command execution
+- Command audit review
 - Local database usage in future versions
 - Controlled automation in future versions
 
-The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, execute approved higher-risk tasks only after explicit confirmation, and later support voice interaction.
+The long-term goal is to create a private, local-first AI assistant that can understand the user's projects, remember relevant information, inspect local files, analyze code, use safe tools, execute controlled commands, check its own runtime environment, route tasks to the correct internal module, safely execute low-risk tasks, execute approved higher-risk tasks only after explicit confirmation, record its command activity, and later support voice interaction.
 
 ---
 
@@ -105,6 +117,7 @@ Hex.ai follows these principles:
 - Safe execution before autonomy
 - Explicit confirmation before risky actions
 - System-level destructive action blocking
+- Auditability for tool-based actions
 - No accidental upload of private data
 - Small working modules before complex autonomy
 - Versioned development
@@ -193,6 +206,10 @@ Hex.ai/
 │   │   │   ├── orchestrator.py
 │   │   │   └── executor.py
 │   │   │
+│   │   ├── audit/
+│   │   │   ├── __init__.py
+│   │   │   └── audit_store.py
+│   │   │
 │   │   ├── llm/
 │   │   │   └── ollama_client.py
 │   │   │
@@ -208,6 +225,7 @@ Hex.ai/
 │   │   │
 │   │   ├── schemas/
 │   │   │   ├── agent.py
+│   │   │   ├── audit.py
 │   │   │   ├── chat.py
 │   │   │   ├── memory.py
 │   │   │   ├── document.py
@@ -260,7 +278,7 @@ FastAPI Backend
         ↓
 Agent Planner + Agent Executor + Core API Layer
         ↓
-LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics
+LLM Layer + Memory Layer + RAG Layer + Tool Layer + System Diagnostics + Audit Layer
         ↓
 Ollama + SQLite + Local Files + Controlled Commands
 ```
@@ -292,6 +310,8 @@ Safe internal capability is executed
     ↓
 Risky command is stopped before execution
     ↓
+Command event is written to audit log when command-related
+    ↓
 Result is returned in a unified response object
 ```
 
@@ -313,6 +333,21 @@ If confirmation is required, confirmation phrase is checked
 If allowed and correctly confirmed, command is executed
     ↓
 If system-high-risk, command remains blocked
+    ↓
+Command event is written to audit log
+```
+
+Current audit flow:
+
+```text
+Command planning or execution
+    ↓
+CommandAuditStore
+    ↓
+SQLite command_audit_logs table
+    ↓
+GET /tools/commands/history
+GET /agent/command-history
 ```
 
 ---
@@ -330,7 +365,7 @@ backend/app/main.py
 Responsibilities:
 
 - Exposes API endpoints
-- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, agent executor, and LLM layer
+- Routes requests to memory, RAG, file tools, codebase tools, command tools, system diagnostics, agent planner, agent executor, audit store, and LLM layer
 - Provides Swagger documentation
 - Returns structured JSON responses
 
@@ -404,6 +439,7 @@ Responsibilities:
 - Executes chat
 - Stops when a command requires confirmation
 - Executes confirmed commands through a dedicated confirmation flow
+- Creates audit records for command-related activity
 - Returns a unified execution response
 
 Current execution endpoints:
@@ -411,6 +447,7 @@ Current execution endpoints:
 ```text
 POST /agent/execute
 POST /agent/execute-confirmed
+GET  /agent/command-history
 ```
 
 Important behavior:
@@ -420,11 +457,68 @@ Safe read-only commands can be auto-executed.
 Commands requiring confirmation are not auto-executed by /agent/execute.
 Commands requiring confirmation can be executed by /agent/execute-confirmed only with the correct phrase.
 System-high-risk commands remain blocked even when confirmation is provided.
+Command-related activity is recorded in SQLite audit logs.
 ```
 
 ---
 
-### 4. LLM Layer
+### 4. Audit Layer
+
+Location:
+
+```text
+backend/app/audit/
+```
+
+Main file:
+
+```text
+audit_store.py
+```
+
+Storage:
+
+```text
+SQLite
+```
+
+Main table:
+
+```text
+command_audit_logs
+```
+
+Responsibilities:
+
+- Stores command planning events
+- Stores command execution events
+- Stores confirmed command execution events
+- Stores command source
+- Stores action type
+- Stores command text or command key
+- Stores working directory
+- Stores risk level
+- Stores confirmation requirement
+- Stores whether execution was allowed
+- Stores whether execution happened
+- Stores return code
+- Stores timeout status
+- Stores reason
+- Stores warnings
+- Stores stdout preview
+- Stores stderr preview
+- Stores whether confirmation was provided
+
+Current audit endpoints:
+
+```text
+GET /tools/commands/history
+GET /agent/command-history
+```
+
+---
+
+### 5. LLM Layer
 
 Location:
 
@@ -448,7 +542,7 @@ Responsibilities:
 
 ---
 
-### 5. Prompt Layer
+### 6. Prompt Layer
 
 Location:
 
@@ -471,7 +565,7 @@ Responsibilities:
 
 ---
 
-### 6. Memory Layer
+### 7. Memory Layer
 
 Location:
 
@@ -516,7 +610,7 @@ Send prompt to Ollama
 
 ---
 
-### 7. RAG Layer
+### 8. RAG Layer
 
 Location:
 
@@ -566,7 +660,7 @@ Send prompt to Ollama
 
 ---
 
-### 8. Tool Layer
+### 9. Tool Layer
 
 Location:
 
@@ -596,7 +690,7 @@ Current capabilities:
 
 ---
 
-### 9. Command Permission Engine
+### 10. Command Permission Engine
 
 Main file:
 
@@ -643,7 +737,7 @@ I_CONFIRM_HEXAI_FULL_ACCESS
 
 ---
 
-### 10. System Diagnostics
+### 11. System Diagnostics
 
 Location:
 
@@ -673,7 +767,7 @@ Current capabilities:
 
 ---
 
-### 11. Security Layer
+### 12. Security Layer
 
 Location:
 
@@ -714,6 +808,7 @@ POST /chat
 POST /agent/plan
 POST /agent/execute
 POST /agent/execute-confirmed
+GET  /agent/command-history
 ```
 
 ### System
@@ -755,6 +850,7 @@ POST /tools/codebase/analyze
 
 ```text
 GET  /tools/commands/allowed
+GET  /tools/commands/history
 POST /tools/commands/run
 POST /tools/commands/plan
 POST /tools/commands/run-confirmed
@@ -783,7 +879,7 @@ Reasons:
 - `.env` may contain secrets, API keys, tokens, or local configuration
 - `.git` contains repository internals
 - `.venv` contains installed packages and large dependency files
-- `data/memory` contains personal assistant memory
+- `data/memory` contains assistant memory and audit data
 - `data/vector_db` will contain embedded private documents in future versions
 
 ---
@@ -822,12 +918,14 @@ The following must not be committed:
 data/documents/*
 data/memory/*
 data/vector_db/*
+backend/data/*
 personal files
 API keys
 tokens
 credentials
 private logs
 local database files
+audit database files
 ```
 
 The `.gitignore` file is configured to prevent private local data from being uploaded accidentally.
@@ -1001,7 +1099,7 @@ Expected response includes:
 {
   "app_name": "Hex.ai",
   "app_env": "development",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "default_model": "qwen2.5-coder:14b",
   "embedding_model": "nomic-embed-text"
 }
@@ -1129,6 +1227,20 @@ Expected result:
 }
 ```
 
+Expected audit data inside result:
+
+```json
+{
+  "audit_record": {
+    "source": "agent",
+    "action": "execute",
+    "command_text": "git status",
+    "risk_level": "READ_ONLY",
+    "executed": true
+  }
+}
+```
+
 Risky command example:
 
 ```json
@@ -1244,6 +1356,20 @@ Expected result:
 }
 ```
 
+Expected audit data:
+
+```json
+{
+  "audit_record": {
+    "source": "agent",
+    "action": "execute_confirmed",
+    "risk_level": "MIXED_OR_CHAINED",
+    "confirmation_provided": true,
+    "executed": true
+  }
+}
+```
+
 System-high-risk command example:
 
 ```json
@@ -1270,6 +1396,35 @@ Expected command plan:
 {
   "risk_level": "SYSTEM_HIGH_RISK",
   "allowed_to_run": false
+}
+```
+
+---
+
+### Agent Command History
+
+Endpoint:
+
+```text
+GET /agent/command-history?limit=10
+```
+
+Expected response:
+
+```json
+{
+  "limit": 10,
+  "count": 1,
+  "records": [
+    {
+      "source": "agent",
+      "action": "execute_confirmed",
+      "command_text": "echo Hex.ai audit test > data\\documents\\audit_test.txt",
+      "risk_level": "MIXED_OR_CHAINED",
+      "executed": true,
+      "confirmation_provided": true
+    }
+  ]
 }
 ```
 
@@ -1442,6 +1597,34 @@ Endpoint:
 
 ```text
 GET /tools/commands/allowed
+```
+
+---
+
+### Command History
+
+Endpoint:
+
+```text
+GET /tools/commands/history?limit=10
+```
+
+Expected response:
+
+```json
+{
+  "limit": 10,
+  "count": 1,
+  "records": [
+    {
+      "source": "tools",
+      "action": "plan",
+      "command_text": "git status",
+      "risk_level": "READ_ONLY",
+      "executed": false
+    }
+  ]
+}
 ```
 
 ---
@@ -1768,22 +1951,88 @@ Implemented:
 
 ---
 
-## Planned Roadmap
-
 ### v1.4 — Command Audit Logging
 
-Planned:
+Status: Done
 
-- Add command execution audit records
-- Store command history in SQLite
-- Store command risk level, command text, cwd, result code, timestamp, and execution status
-- Add `/tools/commands/history`
-- Add `/agent/command-history`
-- Add safer traceability for confirmed executions
+Implemented:
+
+- Added command audit storage
+- Added SQLite command audit table
+- Added audit records for `/tools/commands/plan`
+- Added audit records for `/tools/commands/run`
+- Added audit records for `/tools/commands/run-confirmed`
+- Added audit records for `/agent/execute`
+- Added audit records for `/agent/execute-confirmed`
+- Added `/tools/commands/history`
+- Added `/agent/command-history`
+- Added stdout preview tracking
+- Added stderr preview tracking
+- Added confirmation tracking
+- Added risk level tracking
+- Added command execution status tracking
+- Added command return code tracking
+- Added timeout tracking
+- Added source/action tracking for audit records
 
 ---
 
-### v1.5 — Project-Specific Modules
+## Planned Roadmap
+
+### v1.5 — Agent Execution Trace
+
+Planned:
+
+- Add multi-step agent trace records
+- Store agent planning decisions
+- Store selected endpoint and parameters
+- Store execution result summaries
+- Add trace IDs to agent responses
+- Add trace history endpoint
+- Prepare the system for multi-step agent loops
+
+---
+
+### v1.6 — Better RAG and Vector Database
+
+Planned:
+
+- Improve chunking strategy
+- Improve semantic ranking
+- Add source-aware answers
+- Add document refresh logic
+- Add Chroma, Qdrant, or FAISS support
+- Improve document metadata tracking
+
+---
+
+### v1.7 — Tool Registry and Dynamic Tool Selection
+
+Planned:
+
+- Add centralized tool registry
+- Add tool metadata
+- Add tool descriptions
+- Add tool safety profiles
+- Allow planner to select tools from registry
+- Prepare for plugin-like local tools
+
+---
+
+### v1.8 — Multi-Step Agent Loop
+
+Planned:
+
+- Add plan-step-execute-observe loop
+- Add multi-action task execution
+- Add final answer synthesis after tool usage
+- Add maximum step limits
+- Add stop conditions
+- Add stronger safety boundaries
+
+---
+
+### v1.9 — Project-Specific Modules
 
 Planned:
 
@@ -1795,7 +2044,7 @@ Planned:
 
 ---
 
-### v1.6 — UI Layer
+### v2.0 — Local Web UI
 
 Planned:
 
@@ -1805,10 +2054,11 @@ Planned:
 - Document manager
 - Command approval panel
 - Project analysis panel
+- Audit log viewer
 
 ---
 
-### v1.7 — Voice Layer
+### v2.1 — Voice Layer
 
 Planned:
 
@@ -1833,6 +2083,10 @@ Possible future additions:
 - SQL Server integration
 - GitHub automation
 - Project task planning agent
+- Local notification system
+- Calendar integration
+- Email integration
+- Game development workflow automation
 
 ---
 
@@ -1846,7 +2100,8 @@ Current limitations:
 - `/agent/execute` executes only safe internal flows
 - Commands requiring confirmation are not executed automatically by `/agent/execute`
 - `/agent/execute-confirmed` currently supports confirmed command execution only
-- No full command audit log yet
+- Audit logging currently focuses on command activity
+- No full multi-step agent trace yet
 - No voice system yet
 - No UI except Swagger
 - No authentication yet
@@ -1869,6 +2124,17 @@ Test every module through Swagger.
 Commit every stable step.
 Keep private data out of GitHub.
 Add more autonomy only after safety layers are working.
+```
+
+Recommended workflow:
+
+```text
+1. Implement one small capability.
+2. Test through Swagger.
+3. Check Git status.
+4. Avoid committing runtime/private data.
+5. Commit only code and documentation.
+6. Push stable versions to GitHub.
 ```
 
 ---
