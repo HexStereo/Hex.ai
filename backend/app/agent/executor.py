@@ -1,4 +1,4 @@
-from typing import Any
+﻿from typing import Any
 
 from fastapi.encoders import jsonable_encoder
 
@@ -311,7 +311,7 @@ class AgentExecutor:
 
         try:
             query_embedding = self.ollama_client.embed(query)
-            search_type = "semantic"
+            search_type = "hybrid"
         except RuntimeError:
             query_embedding = None
             search_type = "keyword"

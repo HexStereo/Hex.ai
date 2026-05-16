@@ -29,7 +29,11 @@ from app.schemas.command import (
     CommandRunRequest,
     CommandRunResponse,
 )
-from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
+from app.schemas.document import (
+    DocumentIngestResponse,
+    DocumentSearchResponse,
+    DocumentSourceListResponse,
+)
 from app.schemas.memory import MemoryCreate, MemoryItem
 from app.schemas.system import SystemInfoResponse
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
@@ -40,7 +44,7 @@ from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 
 
 app = FastAPI(
@@ -268,7 +272,7 @@ def search_documents(query: str, limit: int = 8):
 
     try:
         query_embedding = ollama_client.embed(query)
-        search_type = "semantic"
+        search_type = "hybrid"
     except RuntimeError:
         query_embedding = None
         search_type = "keyword"
@@ -284,6 +288,23 @@ def search_documents(query: str, limit: int = 8):
         search_type=search_type,
         results=results,
     )
+
+
+@app.get("/documents/sources", response_model=DocumentSourceListResponse)
+def list_document_sources(
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+    )
+):
+    sources = document_store.list_document_sources(limit=limit)
+
+    return {
+        "limit": limit,
+        "count": len(sources),
+        "sources": sources,
+    }
 
 
 @app.get("/tools/files/list", response_model=DirectoryListResponse)
