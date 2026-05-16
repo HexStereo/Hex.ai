@@ -4,6 +4,7 @@ from fastapi.encoders import jsonable_encoder
 
 from app.agent.orchestrator import AgentOrchestrator
 from app.audit.audit_store import CommandAuditStore
+from app.audit.trace_store import AgentTraceStore
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
@@ -24,6 +25,7 @@ class AgentExecutor:
         command_tools: CommandTools,
         system_diagnostics: SystemDiagnostics,
         command_audit_store: CommandAuditStore,
+        agent_trace_store: AgentTraceStore,
     ):
         self.orchestrator = orchestrator
         self.ollama_client = ollama_client
@@ -33,6 +35,7 @@ class AgentExecutor:
         self.command_tools = command_tools
         self.system_diagnostics = system_diagnostics
         self.command_audit_store = command_audit_store
+        self.agent_trace_store = agent_trace_store
 
     def _safe_result(self, value: Any) -> Any:
         return jsonable_encoder(value)
@@ -381,6 +384,48 @@ class AgentExecutor:
             "documents_used": len(documents),
         }
 
+    def _record_trace_and_build_response(
+        self,
+        trace_type: str,
+        message: str,
+        cwd: str,
+        model: str | None,
+        plan: dict,
+        executed: bool,
+        requires_confirmation: bool,
+        result: Any,
+        reason: str,
+        warnings: list[str],
+    ) -> dict:
+        trace_record = self.agent_trace_store.record_trace(
+            source="agent",
+            trace_type=trace_type,
+            message=message,
+            cwd=cwd,
+            model=model or settings.DEFAULT_MODEL,
+            plan=plan,
+            executed=executed,
+            requires_confirmation=requires_confirmation,
+            result=result,
+            reason=reason,
+            warnings=warnings,
+        )
+
+        return {
+            "trace_id": trace_record["id"],
+            "message": plan["message"],
+            "intent": plan["intent"],
+            "confidence": plan["confidence"],
+            "planned_method": plan["method"],
+            "planned_endpoint": plan["endpoint"],
+            "planned_parameters": plan["parameters"],
+            "executed": executed,
+            "requires_confirmation": requires_confirmation,
+            "result": self._safe_result(result),
+            "reason": reason,
+            "warnings": warnings,
+        }
+
     def execute(
         self,
         message: str,
@@ -455,19 +500,18 @@ class AgentExecutor:
             reason = f"Unknown intent '{intent}' cannot be executed."
             warnings.append("The planner returned an unsupported intent.")
 
-        return {
-            "message": plan["message"],
-            "intent": intent,
-            "confidence": plan["confidence"],
-            "planned_method": plan["method"],
-            "planned_endpoint": plan["endpoint"],
-            "planned_parameters": parameters,
-            "executed": executed,
-            "requires_confirmation": requires_confirmation,
-            "result": self._safe_result(result),
-            "reason": reason,
-            "warnings": warnings,
-        }
+        return self._record_trace_and_build_response(
+            trace_type="execute",
+            message=message,
+            cwd=cwd,
+            model=model,
+            plan=plan,
+            executed=executed,
+            requires_confirmation=requires_confirmation,
+            result=result,
+            reason=reason,
+            warnings=warnings,
+        )
 
     def execute_confirmed(
         self,
@@ -489,19 +533,18 @@ class AgentExecutor:
         if intent != "COMMAND_PLAN":
             warnings.append("Confirmed execution is only available for command planning intents.")
 
-            return {
-                "message": plan["message"],
-                "intent": intent,
-                "confidence": plan["confidence"],
-                "planned_method": plan["method"],
-                "planned_endpoint": plan["endpoint"],
-                "planned_parameters": parameters,
-                "executed": False,
-                "requires_confirmation": False,
-                "result": None,
-                "reason": "This request was not routed as a command, so confirmed execution was not performed.",
-                "warnings": warnings,
-            }
+            return self._record_trace_and_build_response(
+                trace_type="execute_confirmed",
+                message=message,
+                cwd=cwd,
+                model=model,
+                plan=plan,
+                executed=False,
+                requires_confirmation=False,
+                result=None,
+                reason="This request was not routed as a command, so confirmed execution was not performed.",
+                warnings=warnings,
+            )
 
         command_execution = self._execute_confirmed_command(
             parameters=parameters,
@@ -510,22 +553,21 @@ class AgentExecutor:
 
         warnings.extend(command_execution["warnings"])
 
-        return {
-            "message": plan["message"],
-            "intent": intent,
-            "confidence": plan["confidence"],
-            "planned_method": plan["method"],
-            "planned_endpoint": plan["endpoint"],
-            "planned_parameters": parameters,
-            "executed": command_execution["executed"],
-            "requires_confirmation": command_execution["requires_confirmation"],
-            "result": self._safe_result(
-                {
-                    "command_plan": command_execution["command_plan"],
-                    "command_result": command_execution["result"],
-                    "audit_record": command_execution["audit_record"],
-                }
-            ),
-            "reason": command_execution["reason"],
-            "warnings": warnings,
+        result = {
+            "command_plan": command_execution["command_plan"],
+            "command_result": command_execution["result"],
+            "audit_record": command_execution["audit_record"],
         }
+
+        return self._record_trace_and_build_response(
+            trace_type="execute_confirmed",
+            message=message,
+            cwd=cwd,
+            model=model,
+            plan=plan,
+            executed=command_execution["executed"],
+            requires_confirmation=command_execution["requires_confirmation"],
+            result=result,
+            reason=command_execution["reason"],
+            warnings=warnings,
+        )

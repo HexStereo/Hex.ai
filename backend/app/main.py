@@ -3,6 +3,7 @@ from fastapi import FastAPI, HTTPException, Query
 from app.agent.executor import AgentExecutor
 from app.agent.orchestrator import AgentOrchestrator
 from app.audit.audit_store import CommandAuditStore
+from app.audit.trace_store import AgentTraceStore
 from app.config import settings
 from app.llm.ollama_client import OllamaClient
 from app.memory.memory_store import MemoryStore
@@ -32,13 +33,14 @@ from app.schemas.document import DocumentIngestResponse, DocumentSearchResponse
 from app.schemas.memory import MemoryCreate, MemoryItem
 from app.schemas.system import SystemInfoResponse
 from app.schemas.tool import DirectoryListResponse, FileReadResponse
+from app.schemas.trace import AgentTraceListResponse
 from app.system.diagnostics import SystemDiagnostics
 from app.tools.codebase_tools import CodebaseTools
 from app.tools.command_tools import CommandTools
 from app.tools.file_tools import FileTools
 
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 
 
 app = FastAPI(
@@ -55,6 +57,7 @@ file_tools = FileTools()
 codebase_tools = CodebaseTools()
 command_tools = CommandTools()
 command_audit_store = CommandAuditStore()
+agent_trace_store = AgentTraceStore()
 system_diagnostics = SystemDiagnostics(version=APP_VERSION)
 agent_orchestrator = AgentOrchestrator(default_model=settings.DEFAULT_MODEL)
 agent_executor = AgentExecutor(
@@ -66,6 +69,7 @@ agent_executor = AgentExecutor(
     command_tools=command_tools,
     system_diagnostics=system_diagnostics,
     command_audit_store=command_audit_store,
+    agent_trace_store=agent_trace_store,
 )
 
 
@@ -155,6 +159,23 @@ def agent_command_history(
     )
 ):
     records = command_audit_store.list_command_events(limit=limit)
+
+    return {
+        "limit": limit,
+        "count": len(records),
+        "records": records,
+    }
+
+
+@app.get("/agent/traces", response_model=AgentTraceListResponse)
+def agent_traces(
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+    )
+):
+    records = agent_trace_store.list_traces(limit=limit)
 
     return {
         "limit": limit,

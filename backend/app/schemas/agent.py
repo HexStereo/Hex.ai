@@ -69,6 +69,7 @@ class AgentConfirmedExecuteRequest(BaseModel):
 
 
 class AgentExecuteResponse(BaseModel):
+    trace_id: int | None = None
     message: str
     intent: str
     confidence: float
